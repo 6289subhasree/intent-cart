@@ -1,0 +1,22 @@
+{
+  "fixture": "synthetic-intents-v1",
+  "sessions": 500,
+  "baseline": {
+    "converted": 195,
+    "conversion_rate": 0.39,
+    "average_order_value_inr": 1646
+  },
+  "intentcart": {
+    "converted": 243,
+    "conversion_rate": 0.486,
+    "average_order_value_inr": 1946,
+    "policy_violations_executed": 0,
+    "injected_failures": 25,
+    "failures_handled": 25
+  },
+  "lift": {
+    "conversion_percent": 24.62,
+    "average_order_value_percent": 18.23
+  },
+  "disclaimer": "Deterministic synthetic evaluation; not a production performance claim."
+}
