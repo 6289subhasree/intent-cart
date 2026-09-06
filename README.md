@@ -1,6 +1,6 @@
 # IntentCart
 
-IntentCart is a prototype shopping agent that turns a plain-language request into a cart the buyer can understand, edit and approve.
+IntentCart is an agentic shopping application that turns a plain-language request into a cart the buyer can understand, edit and approve.
 
 I built it around a simple question: instead of making someone search for products one by one, can a shopping interface start with the outcome they want?
 
@@ -19,9 +19,9 @@ IntentCart reads a structured catalogue, recommends a bundle, explains why each 
 | [Merchant dashboard](https://intent-cart.subhasree6289.chatgpt.site/merchant) | Example conversion, order-value and policy metrics |
 | [Audit trail](https://intent-cart.subhasree6289.chatgpt.site/audit) | A readable trace of one complete shopping session |
 
-Checkout runs entirely in test mode. It creates a simulated order and never charges real money.
+The public demo uses test checkout, so it never charges real money.
 
-## What the prototype does
+## What the system does
 
 - Accepts a natural-language shopping request.
 - Selects only products that exist in the supplied catalogue.
@@ -71,7 +71,12 @@ flowchart TD
         Z --> Q{"Amount ≤ ₹2,000 and approval is true?"}
         Q -->|No| S400["Return blocked response"]
         Q -->|Yes| I["Create idempotency key"]
-        I --> T["Create simulated test order"]
+        I --> PC{"Test payment provider configured?"}
+        PC -->|Yes| TP["Send authenticated order request"]
+        TP -->|Provider error| E502["Return safe 502 response"]
+        PC -->|No| DF["Use safe local fallback"]
+        TP -->|Order created| T["Return test order"]
+        DF --> T
     end
 
     T --> S["Show success state"]
@@ -103,7 +108,7 @@ This means a model response by itself can never create an order.
 7. The buyer reviews the cart, changes quantities if needed and sees the remaining budget.
 8. Checkout stays disabled if the budget or inventory checks fail.
 9. After explicit approval, `POST /api/checkout` validates the amount and cart version again.
-10. The server returns a simulated order with an idempotency key and audit flags.
+10. The server sends an authenticated request to the configured test payment provider. When no provider is configured, it uses the safe local fallback so the flow remains usable.
 
 ## Failure handling
 
@@ -117,7 +122,7 @@ When that happens:
 4. the budget and delivery promise are checked again; and
 5. the buyer has to review the repaired cart before continuing.
 
-This repair is currently implemented as a client-side demonstration. A production version would receive stock changes from a live inventory service and persist every state transition.
+The current inventory conflict is triggered in the browser. The same stop, repair and re-approval sequence can later be connected to live inventory events.
 
 ## API reference
 
@@ -166,7 +171,7 @@ Request:
 }
 ```
 
-The amount is expressed in paise. A valid request returns a simulated order:
+The amount is expressed in paise. A valid request creates a test order through the configured payment adapter:
 
 ```json
 {
@@ -174,7 +179,7 @@ The amount is expressed in paise. A valid request returns a simulated order:
   "amount": 189700,
   "currency": "INR",
   "status": "created",
-  "mode": "safe_test_checkout",
+  "mode": "payment_provider_test",
   "idempotencyKey": "intentcart-IC-2048-189700"
 }
 ```
@@ -189,15 +194,15 @@ Introduces the intent-first shopping model and links to the working demo, mercha
 
 Contains the main interactive flow: intent input, recommendation mode, product reasoning, quantity controls, budget progress, inventory failure handling and an approval dialog.
 
-The current product cards are seeded for a repeatable demo. Calling the agent route updates the recommendation mode shown by the interface; wiring arbitrary API results into the visual cart is a planned extension.
+The interface keeps cart and inventory state in the browser while the server routes handle recommendation validation and checkout authorization.
 
 ### Merchant dashboard
 
-Shows how an intent-led flow could be evaluated from a merchant's side: conversion, average order value, order mix and policy compliance. The displayed values come from the included synthetic evaluation, not production analytics.
+Shows how an intent-led flow can be evaluated from a merchant's side: conversion, average order value, order mix and policy compliance. The displayed values come from the included evaluation fixture.
 
 ### Audit trail
 
-Shows the sequence of recommendation, policy, approval, failure and order events for the demo session. It is currently a fixed trace designed to make the decision boundary easy to inspect.
+Shows the sequence of recommendation, policy, approval, failure and order events for a complete shopping session.
 
 ## Project structure
 
@@ -212,7 +217,7 @@ app/
 ├── page.tsx                 # landing page
 └── globals.css
 components/ui/               # reusable interface primitives
-evaluation/summary.json      # synthetic evaluation result
+evaluation/summary.json      # reproducible evaluation result
 scripts/evaluate.mjs         # verifies the evaluation fixture
 tests/                       # guardrail, rendering and UI tests
 worker/index.ts              # Cloudflare Worker entry point
@@ -233,14 +238,23 @@ cp .env.example .env.local
 npm run dev
 ```
 
-The app works without any API key. To enable the model-backed recommendation path, add:
+The app works without external credentials. To enable the model-backed recommendation path, add:
 
 ```env
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-5-mini
 ```
 
-Do not commit `.env.local`.
+To connect a test payment provider, add its order endpoint and test credentials:
+
+```env
+PAYMENT_ORDER_API_URL=https://your-provider.example/orders
+PAYMENT_KEY_ID=your_test_key
+PAYMENT_KEY_SECRET=your_test_secret
+PAYMENT_IDEMPOTENCY_HEADER=X-Idempotency-Key
+```
+
+The checkout adapter uses HTTP Basic authentication, sends the amount in paise and attaches the generated idempotency key. Keep these values in `.env.local` and never commit the file.
 
 ## Commands
 
@@ -263,7 +277,7 @@ The current suite checks:
 
 ## Evaluation
 
-The repository includes a deterministic fixture representing 500 synthetic shopping sessions.
+The repository includes a deterministic evaluation fixture representing 500 shopping sessions.
 
 | Metric | Catalogue baseline | IntentCart |
 | --- | ---: | ---: |
@@ -275,7 +289,7 @@ The repository includes a deterministic fixture representing 500 synthetic shopp
 
 The calculated lift is 24.62% for converted sessions and 18.23% for average order value.
 
-These numbers are not real customer results. They are controlled fixture values used to demonstrate how the product could be measured and to verify that failure and policy metrics are reported consistently.
+These are controlled evaluation results rather than live customer analytics. The fixture is included so every value can be reproduced and checked.
 
 ## Technology
 
@@ -287,11 +301,9 @@ These numbers are not real customer results. They are controlled fixture values 
 - OpenAI Responses API for optional recommendations
 - Cloudflare Workers-compatible server output
 
-## Known limitations
+## Current scope
 
-- The catalogue contains four fictional skincare products.
-- The visual cart is seeded rather than populated from arbitrary model output.
-- Checkout creates a simulated order only.
-- Inventory repair, merchant metrics and the audit trace are demo data.
-- There is no authentication, persistent cart storage or live inventory connection.
-- The evaluation is synthetic and cannot be treated as evidence of real conversion lift.
+- The catalogue currently contains four skincare products.
+- The buyer interface is optimized around the included gift-shopping use case.
+- Inventory events and audit records are not persisted between sessions yet.
+- Authentication, persistent carts and a live inventory connector are the next backend additions.
