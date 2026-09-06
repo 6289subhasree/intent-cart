@@ -37,7 +37,7 @@ export default function LandingPage() {
       </header>
 
       <section className="landing-hero" id="top">
-        <div className="track-label">TRACK 01 · AI GROWTH & AGENTIC COMMERCE</div>
+        <div className="track-label">BOUNDED · AGENTIC COMMERCE</div>
         <h1>Your next customer<br />might be an <em>agent.</em></h1>
         <div className="hero-bottom">
           <p>IntentCart turns a human shopping request into an explainable, bounded and buyer-approved checkout—end to end.</p>
@@ -109,7 +109,7 @@ export default function LandingPage() {
 
       <footer className="landing-footer">
         <a className="landing-brand" href="#top"><span><ShoppingBag /></span>intentcart</a>
-        <p>Built for Razorpay AI Buildathon · Track 01</p>
+        <p>Built for safer agentic commerce</p>
         <div><a href="/demo">Demo</a><a href="/merchant">Merchant</a><a href="/audit">Audit trail</a></div>
       </footer>
     </main>

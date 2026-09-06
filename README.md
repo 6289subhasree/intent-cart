@@ -2,7 +2,7 @@
 
 **From shopping intent to approved checkout.**
 
-IntentCart is a bounded AI shopping agent built for **Track 01 — AI Growth & Agentic Commerce** of the Razorpay AI Buildathon. A buyer describes an outcome, budget, preferences and delivery constraint; IntentCart reads an agent-ready merchant catalogue, composes a suitable cart, explains every choice, runs deterministic policy checks, requests explicit approval and creates a Razorpay test order.
+IntentCart is a bounded AI shopping agent. A buyer describes an outcome, budget, preferences and delivery constraint; IntentCart reads an agent-ready merchant catalogue, composes a suitable cart, explains every choice, runs deterministic policy checks, requests explicit approval and creates a Razorpay test order.
 
 ## Live product
 
@@ -141,7 +141,7 @@ The evaluation fixture contains 500 deterministic synthetic shopping sessions an
 - The included catalogue and evaluation population are synthetic.
 - The hosted demo uses safe fallback mode until API keys are configured.
 - The prototype creates test orders; it does not capture real money.
-- Authentication, live inventory connectors and production fulfilment are outside the Buildathon prototype scope.
+- Authentication, live inventory connectors and production fulfilment are outside the current prototype scope.
 
 ## Submission status
 
@@ -154,7 +154,6 @@ The evaluation fixture contains 500 deterministic synthetic shopping sessions an
 
 ## Official references
 
-- [Razorpay AI Buildathon](https://razorpay.com/buildathon/)
 - [Razorpay API reference](https://razorpay.com/docs/api/)
 - [Razorpay Webhooks](https://razorpay.com/docs/webhooks)
 - [Razorpay Standard Checkout](https://razorpay.com/docs/developer-tools/integrations/standard-checkout)
