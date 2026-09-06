@@ -29,7 +29,7 @@ const events = [
   { time: "12:04:17.294", icon: RefreshCw, state: "repair", type: "RECOVERY", title: "Cart repaired and revalidated", copy: "Substituted Calm Barrier Serum at the same ₹749 price and preserved Thursday delivery.", meta: "new recommendation rec_2048_r1 · buyer approval invalidated" },
   { time: "12:04:17.310", icon: LockKeyhole, state: "waiting", type: "GATE", title: "Explicit approval requested again", copy: "Because the cart changed, the prior approval could not be reused. Exact amount: ₹1,897.", meta: "approval gate ag_84cd · waiting for buyer" },
   { time: "12:04:24.015", icon: UserCheck, state: "complete", type: "BUYER", title: "Buyer approved exact cart and amount", copy: "Approval captured for recommendation rec_2048_r1. Scope is limited to one order.", meta: "approval apr_81de · expires in 10 minutes" },
-  { time: "12:04:24.661", icon: CircleDollarSign, state: "complete", type: "MONEY", title: "Razorpay test order created", copy: "₹1,897 order created only after approval. Test payment completed successfully.", meta: "order order_QT2048 · test mode · idempotency key retained" },
+  { time: "12:04:24.661", icon: CircleDollarSign, state: "complete", type: "MONEY", title: "Test order created", copy: "₹1,897 order created only after approval. Test payment completed successfully.", meta: "order order_IC2048 · test mode · idempotency key retained" },
 ];
 
 export default function AuditPage() {
@@ -44,7 +44,7 @@ export default function AuditPage() {
         </div>
         <aside className="audit-inspector">
           <div className="inspector-head"><Fingerprint /><div><span>TRACE INTEGRITY</span><strong>Verified</strong></div><CheckCircle2 /></div>
-          <div className="inspector-block"><h2>Execution boundary</h2><dl><div><dt>Agent role</dt><dd>Recommend only</dd></div><div><dt>Executor</dt><dd>Policy-controlled</dd></div><div><dt>Approval</dt><dd>Human · exact amount</dd></div><div><dt>Environment</dt><dd>Razorpay test mode</dd></div></dl></div>
+          <div className="inspector-block"><h2>Execution boundary</h2><dl><div><dt>Agent role</dt><dd>Recommend only</dd></div><div><dt>Executor</dt><dd>Policy-controlled</dd></div><div><dt>Approval</dt><dd>Human · exact amount</dd></div><div><dt>Environment</dt><dd>Safe test mode</dd></div></dl></div>
           <div className="inspector-block"><h2>Failure proof</h2><div className="failure-proof"><TriangleAlert /><span><strong>Checkout stopped</strong><p>The unavailable item produced zero financial side effects.</p></span></div><div className="repair-proof"><RefreshCw /><span><strong>Approval reset</strong><p>The repaired cart could not inherit stale buyer consent.</p></span></div></div>
           <div className="inspector-block"><h2>Structured evidence</h2><pre>{`{
   "trace_id": "IC-2048",

@@ -253,7 +253,7 @@ export default function Home() {
           <Button className="checkout-button" onClick={() => { setPaid(false); setCheckoutOpen(true); }} disabled={total <= 0 || remaining < 0 || inventoryFailure}>
             Review & approve <ArrowRight />
           </Button>
-          <p className="razor-note"><CreditCard /> Razorpay test checkout · No real charge</p>
+          <p className="checkout-note"><CreditCard /> Secure test checkout · No real charge</p>
         </aside>
       </section>
 
@@ -270,7 +270,7 @@ export default function Home() {
           ) : (
             <>
               <DialogHeader>
-                <Badge className="razor-badge">Razorpay · TEST MODE</Badge>
+                <Badge className="checkout-badge">TEST MODE</Badge>
                 <DialogTitle>Approve ₹{total.toLocaleString("en-IN")} checkout</DialogTitle>
                 <DialogDescription>IntentCart cannot complete this payment without your explicit confirmation.</DialogDescription>
               </DialogHeader>

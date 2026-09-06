@@ -7,7 +7,7 @@ const manrope = Manrope({ subsets: ["latin"], variable: "--font-manrope" });
 
 export const metadata: Metadata = {
   title: "IntentCart — Agentic Shopping, Bounded Checkout",
-  description: "Turn a shopping request into an approved, auditable Razorpay checkout.",
+  description: "Turn a shopping request into an approved, auditable checkout.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

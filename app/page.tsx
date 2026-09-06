@@ -19,7 +19,7 @@ const flow = [
   { n: "01", icon: MessageSquareText, title: "State the intent", copy: "The buyer describes the need, budget, preferences and delivery deadline in plain language." },
   { n: "02", icon: PackageSearch, title: "Compose the cart", copy: "The agent reads a structured catalogue, ranks products and builds the highest-fit bundle." },
   { n: "03", icon: ShieldCheck, title: "Enforce the bounds", copy: "A deterministic policy checks budget, stock, consent, delivery and merchant rules." },
-  { n: "04", icon: WalletCards, title: "Approve and pay", copy: "The buyer sees every decision, explicitly approves the amount, then enters Razorpay checkout." },
+  { n: "04", icon: WalletCards, title: "Approve and pay", copy: "The buyer sees every decision and explicitly approves the exact amount before checkout." },
 ];
 
 export default function LandingPage() {
