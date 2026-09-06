@@ -6,10 +6,10 @@ IntentCart is a bounded AI shopping agent built for **Track 01 — AI Growth & A
 
 ## Live product
 
-- Landing page: `/`
-- Buyer experience: `/demo`
-- Merchant analytics: `/merchant`
-- Complete decision trace: `/audit`
+- [Landing page](https://intent-cart.subhasree6289.chatgpt.site/)
+- [Buyer experience](https://intent-cart.subhasree6289.chatgpt.site/demo)
+- [Merchant analytics](https://intent-cart.subhasree6289.chatgpt.site/merchant)
+- [Complete decision trace](https://intent-cart.subhasree6289.chatgpt.site/audit)
 
 ## Why it exists
 
@@ -143,12 +143,14 @@ The evaluation fixture contains 500 deterministic synthetic shopping sessions an
 - The prototype creates test orders; it does not capture real money.
 - Authentication, live inventory connectors and production fulfilment are outside the Buildathon prototype scope.
 
-## Submission assets still to complete
+## Submission status
 
-- Public GitHub repository URL
-- Five-minute unlisted pitch video
-- Final architecture image for the application form
-- Written account of what broke and how it was fixed
+- [x] Public GitHub repository
+- [x] Hosted working product
+- [x] Architecture and safety contract
+- [x] Synthetic evaluation and reproducible tests
+- [ ] Five-minute unlisted pitch video
+- [ ] Final application responses and submission
 
 ## Official references
 
@@ -156,4 +158,3 @@ The evaluation fixture contains 500 deterministic synthetic shopping sessions an
 - [Razorpay API reference](https://razorpay.com/docs/api/)
 - [Razorpay Webhooks](https://razorpay.com/docs/webhooks)
 - [Razorpay Standard Checkout](https://razorpay.com/docs/developer-tools/integrations/standard-checkout)
-
