@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { createOrder, getSession, updateSession } from "@/db/repository";
+import { completeOrder, getSession } from "@/db/repository";
 import { evaluateCart } from "@/lib/commerce";
 
 const schema = z.object({ sessionId: z.string().min(5), cartVersion: z.string().min(5), approval: z.literal(true) });
@@ -34,11 +34,17 @@ export async function POST(request: NextRequest) {
   }
   const now = new Date().toISOString();
   const providerOrderId = String(providerOrder.id);
-  await createOrder({ id: crypto.randomUUID(), sessionId: session.id, providerOrderId, amount: policy.total, currency: session.currency, status: String(providerOrder.status ?? "created"), mode, idempotencyKey, createdAt: now });
   const next = { ...session, status: "ordered" as const, policy, approvedAt: now, updatedAt: now, orderId: providerOrderId };
-  await updateSession(next, [
-    { type: "BUYER", state: "complete", title: "Buyer approved exact cart and amount", detail: `Approval captured for ${session.cartVersion} at ₹${(policy.total / 100).toLocaleString("en-IN")}.`, metadata: { approvedAmount: policy.total } },
-    { type: "MONEY", state: "complete", title: "Test order created", detail: "The order was created after approval and retained its idempotency key.", metadata: { providerOrderId, mode, idempotencyKey } },
-  ]);
+  const events = [
+    { type: "BUYER", state: "complete" as const, title: "Buyer approved exact cart and amount", detail: `Approval captured for ${session.cartVersion} at ₹${(policy.total / 100).toLocaleString("en-IN")}.`, metadata: { approvedAmount: policy.total } },
+    { type: "MONEY", state: "complete" as const, title: "Test order created", detail: "The order was created after approval and retained its idempotency key.", metadata: { providerOrderId, mode, idempotencyKey } },
+  ];
+  try {
+    await completeOrder(next, { id: crypto.randomUUID(), sessionId: session.id, providerOrderId, amount: policy.total, currency: session.currency, status: String(providerOrder.status ?? "created"), mode, idempotencyKey, createdAt: now }, events);
+  } catch (error) {
+    const completed = await getSession(session.id).catch(() => null);
+    if (completed?.status === "ordered" && completed.orderId) return NextResponse.json({ id: completed.orderId, amount: completed.total, currency: completed.currency, status: "created", reused: true });
+    throw error;
+  }
   return NextResponse.json({ ...providerOrder, mode, idempotencyKey, sessionId: session.id, audit: { approved: true, bounded: true, idempotent: true } });
 }

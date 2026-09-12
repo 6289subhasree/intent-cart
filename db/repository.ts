@@ -110,10 +110,18 @@ export async function updateSession(session: StoredSession, events: AuditEventIn
   ]);
 }
 
-export async function createOrder(order: { id: string; sessionId: string; providerOrderId: string; amount: number; currency: string; status: string; mode: string; idempotencyKey: string; createdAt: string }) {
+export async function completeOrder(session: StoredSession, order: { id: string; sessionId: string; providerOrderId: string; amount: number; currency: string; status: string; mode: string; idempotencyKey: string; createdAt: string }, events: AuditEventInput[]) {
   const db = await database();
-  await db.prepare(`INSERT INTO orders (id, session_id, provider_order_id, amount, currency, status, mode, idempotency_key, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(order.id, order.sessionId, order.providerOrderId, order.amount, order.currency, order.status, order.mode, order.idempotencyKey, order.createdAt).run();
+  const sequenceRow = await db.prepare("SELECT COALESCE(MAX(sequence), 0) AS value FROM audit_events WHERE session_id = ?").bind(session.id).first<{ value: number }>();
+  const start = Number(sequenceRow?.value ?? 0);
+  await db.batch([
+    db.prepare(`INSERT INTO orders (id, session_id, provider_order_id, amount, currency, status, mode, idempotency_key, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(order.id, order.sessionId, order.providerOrderId, order.amount, order.currency, order.status, order.mode, order.idempotencyKey, order.createdAt),
+    db.prepare(`UPDATE shopping_sessions SET status = ?, total = ?, policy_json = ?, updated_at = ?, approved_at = ?, order_id = ? WHERE id = ?`).bind(
+      session.status, session.total, JSON.stringify(session.policy), session.updatedAt, session.approvedAt, session.orderId, session.id,
+    ),
+    ...events.map((event, index) => eventStatement(db, session.id, start + index + 1, event, session.updatedAt)),
+  ]);
 }
 
 export async function getAuditBundle(sessionId?: string | null) {
