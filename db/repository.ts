@@ -1,5 +1,3 @@
-import { env } from "cloudflare:workers";
-
 import type { CartLine, PolicyResult } from "@/lib/commerce";
 
 type Statement = {
@@ -49,7 +47,10 @@ export type AuditEvent = AuditEventInput & {
   createdAt: string;
 };
 
-function database() {
+async function database() {
+  const injected = (globalThis as typeof globalThis & { __INTENTCART_DB__?: Database }).__INTENTCART_DB__;
+  if (injected) return injected;
+  const { env } = await import("cloudflare:workers");
   const db = (env as unknown as { DB?: Database }).DB;
   if (!db) throw new Error("Persistent session storage is unavailable.");
   return db;
@@ -75,7 +76,7 @@ function rowToSession(row: Record<string, unknown>): StoredSession {
 }
 
 export async function createSession(session: StoredSession, events: AuditEventInput[]) {
-  const db = database();
+  const db = await database();
   const statements = [
     db.prepare(`INSERT INTO shopping_sessions
       (id, intent, title, mode, status, budget, total, currency, cart_version, fit_score, cart_json, policy_json, created_at, updated_at, approved_at, order_id)
@@ -90,12 +91,12 @@ export async function createSession(session: StoredSession, events: AuditEventIn
 }
 
 export async function getSession(id: string) {
-  const row = await database().prepare("SELECT * FROM shopping_sessions WHERE id = ?").bind(id).first();
+  const row = await (await database()).prepare("SELECT * FROM shopping_sessions WHERE id = ?").bind(id).first();
   return row ? rowToSession(row) : null;
 }
 
 export async function updateSession(session: StoredSession, events: AuditEventInput[] = []) {
-  const db = database();
+  const db = await database();
   const sequenceRow = await db.prepare("SELECT COALESCE(MAX(sequence), 0) AS value FROM audit_events WHERE session_id = ?").bind(session.id).first<{ value: number }>();
   const start = Number(sequenceRow?.value ?? 0);
   await db.batch([
@@ -110,13 +111,13 @@ export async function updateSession(session: StoredSession, events: AuditEventIn
 }
 
 export async function createOrder(order: { id: string; sessionId: string; providerOrderId: string; amount: number; currency: string; status: string; mode: string; idempotencyKey: string; createdAt: string }) {
-  const db = database();
+  const db = await database();
   await db.prepare(`INSERT INTO orders (id, session_id, provider_order_id, amount, currency, status, mode, idempotency_key, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(order.id, order.sessionId, order.providerOrderId, order.amount, order.currency, order.status, order.mode, order.idempotencyKey, order.createdAt).run();
 }
 
 export async function getAuditBundle(sessionId?: string | null) {
-  const db = database();
+  const db = await database();
   const row = sessionId
     ? await db.prepare("SELECT * FROM shopping_sessions WHERE id = ?").bind(sessionId).first()
     : await db.prepare("SELECT * FROM shopping_sessions ORDER BY created_at DESC LIMIT 1").first();
@@ -131,7 +132,7 @@ export async function getAuditBundle(sessionId?: string | null) {
 }
 
 export async function getMerchantSnapshot() {
-  const db = database();
+  const db = await database();
   const summary = await db.prepare(`SELECT COUNT(*) AS sessions,
     SUM(CASE WHEN status = 'ordered' THEN 1 ELSE 0 END) AS converted,
     SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked,

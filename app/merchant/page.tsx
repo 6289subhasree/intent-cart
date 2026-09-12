@@ -1,23 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  Bot,
-  CheckCircle2,
-  ChevronDown,
-  CircleDollarSign,
-  Eye,
-  Gauge,
-  PackageSearch,
-  ShieldCheck,
-  ShoppingBag,
-  Sparkles,
-  TrendingUp,
-  TriangleAlert,
-  Users,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowUpRight, Bot, CheckCircle2, CircleDollarSign, Gauge, PackageSearch, ShieldCheck, ShoppingBag, Sparkles, TrendingUp, TriangleAlert, Users } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
@@ -25,55 +9,32 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-const trend = [
-  { day: "Mon", intent: 43, baseline: 32 }, { day: "Tue", intent: 58, baseline: 39 },
-  { day: "Wed", intent: 71, baseline: 46 }, { day: "Thu", intent: 94, baseline: 61 },
-  { day: "Fri", intent: 122, baseline: 81 }, { day: "Sat", intent: 146, baseline: 98 },
-  { day: "Sun", intent: 173, baseline: 111 },
-];
-
-const sessions = [
-  { id: "IC-2048", intent: "Sensitive-skin gift under ₹2,000", cart: "3 products", value: "₹1,897", result: "Converted", guardrail: "3/3 passed" },
-  { id: "IC-2047", intent: "Haircare routine for dry curls", cart: "4 products", value: "₹2,416", result: "Reviewing", guardrail: "3/3 passed" },
-  { id: "IC-2046", intent: "Wedding gift under ₹5,000", cart: "5 products", value: "₹4,820", result: "Converted", guardrail: "4/4 passed" },
-  { id: "IC-2045", intent: "Add two premium serums", cart: "Blocked", value: "₹3,399", result: "Bound exceeded", guardrail: "2/3 passed" },
-];
+type Session = { id: string; intent: string; title: string; status: "ready" | "blocked" | "approved" | "ordered"; total: number; cart: Array<{ productId: string; quantity: number }>; policy: { passed: boolean }; createdAt: string };
+type Snapshot = { sessions: number; converted: number; blocked: number; revenue: number; aov: number; recent: Session[] };
+const money = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
 
 export default function MerchantPage() {
-  const [period, setPeriod] = useState("Last 7 days");
+  const [data, setData] = useState<Snapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { fetch("/api/merchant").then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; }).then(setData).catch((cause) => setError(cause instanceof Error ? cause.message : "Analytics could not be loaded.")); }, []);
+  const conversion = data?.sessions ? (data.converted / data.sessions) * 100 : 0;
+  const compliance = data?.sessions ? ((data.sessions - data.blocked) / data.sessions) * 100 : 100;
+  const trend = useMemo(() => {
+    let orders = 0;
+    return [...(data?.recent ?? [])].reverse().map((session, index) => { if (session.status === "ordered") orders += session.total / 100; return { step: index + 1, revenue: orders, carts: (index + 1) * 500 }; });
+  }, [data]);
+
   return (
     <main className="merchant-shell">
-      <aside className="merchant-sidebar">
-        <a className="merchant-logo" href="/"><span><ShoppingBag /></span>intentcart</a>
-        <p>Merchant console</p>
-        <nav><a className="selected"><Gauge />Overview</a><a><Bot />Agent sessions</a><a><PackageSearch />Catalogue</a><a><ShieldCheck />Policies</a><a><TriangleAlert />Exceptions <b>3</b></a></nav>
-        <div className="merchant-side-card"><Sparkles /><strong>Agent catalogue health</strong><Progress value={94} /><span>94% ready for AI buyers</span></div>
-        <a className="back-shop" href="/demo"><ArrowLeft />Open buyer demo</a>
-      </aside>
-
+      <aside className="merchant-sidebar"><a className="merchant-logo" href="/"><span><ShoppingBag /></span>intentcart</a><p>Merchant console</p><nav><a className="selected"><Gauge />Overview</a><a><Bot />Agent sessions</a><a><PackageSearch />Catalogue</a><a><ShieldCheck />Policies</a><a><TriangleAlert />Exceptions <b>{data?.blocked ?? 0}</b></a></nav><div className="merchant-side-card"><Sparkles /><strong>Catalogue readiness</strong><Progress value={100} /><span>5 products policy-ready</span></div><a className="back-shop" href="/demo"><ArrowLeft />Open buyer demo</a></aside>
       <section className="merchant-main">
-        <header className="merchant-header"><div><p>Nova Beauty · Test mode</p><h1>Agentic commerce overview</h1></div><Button variant="outline" onClick={() => setPeriod(period === "Last 7 days" ? "Last 30 days" : "Last 7 days")}>{period}<ChevronDown /></Button></header>
-
-        <section className="merchant-metrics">
-          <article><span><CircleDollarSign />Agent-attributed revenue</span><strong>₹3,28,440</strong><p><b><ArrowUpRight />24.6%</b> vs. browsing baseline</p></article>
-          <article><span><Users />Qualified intents</span><strong>1,284</strong><p><b><ArrowUpRight />18.9%</b> week over week</p></article>
-          <article><span><TrendingUp />Average order value</span><strong>₹1,946</strong><p><b><ArrowUpRight />18.2%</b> with bounded cross-sell</p></article>
-          <article><span><ShieldCheck />Policy compliance</span><strong>100%</strong><p>46 actions safely blocked</p></article>
+        <header className="merchant-header"><div><p>Nova Beauty · persisted activity</p><h1>Commerce operations overview</h1></div><Button variant="outline" onClick={() => window.location.reload()}>Refresh data</Button></header>
+        {error && <div className="merchant-error"><TriangleAlert />{error}</div>}
+        <section className="merchant-metrics"><article><span><CircleDollarSign />Agent-attributed revenue</span><strong>{money(data?.revenue ?? 0)}</strong><p><b><ArrowUpRight />{data?.converted ?? 0}</b> completed test orders</p></article><article><span><Users />Shopping sessions</span><strong>{data?.sessions ?? 0}</strong><p><b>{conversion.toFixed(1)}%</b> checkout conversion</p></article><article><span><TrendingUp />Average order value</span><strong>{money(data?.aov ?? 0)}</strong><p>Calculated from completed sessions</p></article><article><span><ShieldCheck />Policy compliance</span><strong>{compliance.toFixed(1)}%</strong><p>{data?.blocked ?? 0} currently blocked sessions</p></article></section>
+        <section className="merchant-grid"><article className="merchant-card performance-card"><div className="merchant-card-head"><div><h2>Recorded revenue</h2><p>Cumulative order value from persisted shopping sessions</p></div><Badge variant="outline">LIVE SESSION DATA</Badge></div>{trend.length ? <><div className="merchant-legend"><span><i className="intent-line" />Completed orders</span></div><div className="merchant-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend} margin={{ top: 12, right: 10, left: -10, bottom: 0 }}><defs><linearGradient id="merchantFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#6b4ee8" stopOpacity={.24}/><stop offset="1" stopColor="#6b4ee8" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#e9e5ee" vertical={false}/><XAxis dataKey="step" axisLine={false} tickLine={false} fontSize={12}/><YAxis axisLine={false} tickLine={false} fontSize={12}/><Tooltip formatter={(value) => `₹${Number(value).toLocaleString("en-IN")}`} /><Area type="monotone" dataKey="revenue" stroke="#6b4ee8" strokeWidth={2.5} fill="url(#merchantFill)"/></AreaChart></ResponsiveContainer></div></> : <div className="chart-empty"><TrendingUp /><strong>No orders recorded yet</strong><p>Complete the buyer flow and this chart will update from the saved session.</p></div>}</article>
+          <article className="merchant-card funnel-card"><div className="merchant-card-head"><div><h2>Session funnel</h2><p>Built from all recorded sessions</p></div></div><div className="funnel-list"><div><span>Intent understood</span><strong>{data?.sessions ?? 0} <small>100%</small></strong><Progress value={data?.sessions ? 100 : 0}/></div><div><span>Valid cart composed</span><strong>{(data?.sessions ?? 0) - (data?.blocked ?? 0)} <small>{compliance.toFixed(1)}%</small></strong><Progress value={data?.sessions ? compliance : 0}/></div><div><span>Buyer approved</span><strong>{data?.converted ?? 0} <small>{conversion.toFixed(1)}%</small></strong><Progress value={conversion}/></div><div><span>Order created</span><strong>{data?.converted ?? 0} <small>{conversion.toFixed(1)}%</small></strong><Progress value={conversion}/></div></div><div className="funnel-note"><ArrowUpRight /><span><strong>One source of truth</strong>for sessions, policies and orders</span></div></article>
         </section>
-
-        <section className="merchant-grid">
-          <article className="merchant-card performance-card">
-            <div className="merchant-card-head"><div><h2>Revenue contribution</h2><p>Cumulative orders attributed to AI shopping sessions</p></div><Badge variant="outline">LIVE EVALUATION</Badge></div>
-            <div className="merchant-legend"><span><i className="intent-line" />IntentCart ₹3.28L</span><span><i className="base-line" />Baseline ₹2.64L</span></div>
-            <div className="merchant-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend} margin={{ top: 12, right: 10, left: -20, bottom: 0 }}><defs><linearGradient id="merchantFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#6b4ee8" stopOpacity={.24}/><stop offset="1" stopColor="#6b4ee8" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#e9e5ee" vertical={false}/><XAxis dataKey="day" axisLine={false} tickLine={false} fontSize={12}/><YAxis axisLine={false} tickLine={false} fontSize={12}/><Tooltip/><Area type="monotone" dataKey="baseline" stroke="#b0aabb" fill="none" strokeDasharray="5 5"/><Area type="monotone" dataKey="intent" stroke="#6b4ee8" strokeWidth={2.5} fill="url(#merchantFill)"/></AreaChart></ResponsiveContainer></div>
-          </article>
-          <article className="merchant-card funnel-card"><div className="merchant-card-head"><div><h2>Intent funnel</h2><p>Last 1,284 shopping sessions</p></div></div><div className="funnel-list"><div><span>Intent understood</span><strong>1,213 <small>94.5%</small></strong><Progress value={94.5}/></div><div><span>Valid cart composed</span><strong>942 <small>73.4%</small></strong><Progress value={73.4}/></div><div><span>Buyer approved</span><strong>618 <small>48.1%</small></strong><Progress value={48.1}/></div><div><span>Payment captured</span><strong>514 <small>40.0%</small></strong><Progress value={40}/></div></div><div className="funnel-note"><ArrowUpRight /><span><strong>+9.8 point conversion lift</strong>against catalogue browsing</span></div></article>
-        </section>
-
-        <section className="merchant-card sessions-card">
-          <div className="merchant-card-head"><div><h2>Recent agent sessions</h2><p>Every recommendation, policy decision and money action</p></div><Button variant="outline"><Eye />View all sessions</Button></div>
-          <Table><TableHeader><TableRow><TableHead>Session</TableHead><TableHead>Buyer intent</TableHead><TableHead>Cart</TableHead><TableHead>Value</TableHead><TableHead>Guardrails</TableHead><TableHead>Outcome</TableHead></TableRow></TableHeader><TableBody>{sessions.map((session)=><TableRow key={session.id}><TableCell className="session-id">{session.id}</TableCell><TableCell>{session.intent}</TableCell><TableCell>{session.cart}</TableCell><TableCell><strong>{session.value}</strong></TableCell><TableCell><span className="guardrail-cell"><ShieldCheck />{session.guardrail}</span></TableCell><TableCell><Badge variant="outline" className={session.result === "Converted" ? "result-success" : session.result === "Bound exceeded" ? "result-blocked" : "result-waiting"}>{session.result === "Converted" && <CheckCircle2 />}{session.result}</Badge></TableCell></TableRow>)}</TableBody></Table>
-        </section>
+        <section className="merchant-card sessions-card"><div className="merchant-card-head"><div><h2>Recent agent sessions</h2><p>Recommendations, current policy state and checkout outcomes</p></div><Button variant="outline" asChild><a href="/audit">Open latest trace</a></Button></div>{data?.recent.length ? <Table><TableHeader><TableRow><TableHead>Session</TableHead><TableHead>Buyer intent</TableHead><TableHead>Cart</TableHead><TableHead>Value</TableHead><TableHead>Guardrails</TableHead><TableHead>Outcome</TableHead></TableRow></TableHeader><TableBody>{data.recent.map((session) => <TableRow key={session.id}><TableCell className="session-id"><a href={`/audit?sessionId=${encodeURIComponent(session.id)}`}>{session.id}</a></TableCell><TableCell>{session.intent}</TableCell><TableCell>{session.cart.reduce((sum, item) => sum + item.quantity, 0)} items</TableCell><TableCell><strong>{money(session.total)}</strong></TableCell><TableCell><span className="guardrail-cell"><ShieldCheck />{session.policy.passed ? "Passed" : "Blocked"}</span></TableCell><TableCell><Badge variant="outline" className={session.status === "ordered" ? "result-success" : session.status === "blocked" ? "result-blocked" : "result-waiting"}>{session.status === "ordered" && <CheckCircle2 />}{session.status === "ordered" ? "Converted" : session.status === "blocked" ? "Blocked" : "Reviewing"}</Badge></TableCell></TableRow>)}</TableBody></Table> : <div className="sessions-empty"><Bot /><strong>No sessions yet</strong><p>Build a cart in the buyer demo to populate this dashboard.</p><a href="/demo">Start a session</a></div>}</section>
       </section>
     </main>
   );

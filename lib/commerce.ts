@@ -34,6 +34,7 @@ export const catalogue: CatalogueProduct[] = [
   { id: "sku_serum_04", name: "Bright C Serum", detail: "30 ml · 10% vitamin C", price: 74_900, tags: ["vitamin-c", "gift"], stock: 9, deliveryDays: 2, crop: "product-two" },
   { id: "sku_spf_07", name: "Cloudveil SPF 50", detail: "50 g · No white cast", price: 59_900, tags: ["sensitive-skin", "fragrance-free"], stock: 23, deliveryDays: 2, crop: "product-three" },
   { id: "sku_barrier_02", name: "Calm Barrier Serum", detail: "30 ml · Ceramide complex", price: 74_900, tags: ["sensitive-skin", "ceramides", "fragrance-free"], stock: 11, deliveryDays: 2, crop: "product-two" },
+  { id: "sku_wrap_01", name: "Reusable Gift Wrap", detail: "Cotton wrap · Gift note included", price: 7_900, tags: ["gift", "reusable"], stock: 40, deliveryDays: 2, crop: "product-one" },
 ];
 
 export const defaultReasons: Record<string, string> = {
@@ -41,6 +42,7 @@ export const defaultReasons: Record<string, string> = {
   sku_serum_04: "Adds a gift-worthy treatment within budget",
   sku_spf_07: "Completes a practical morning routine",
   sku_barrier_02: "A gentle, in-stock alternative at the same price",
+  sku_wrap_01: "Adds a finished gift experience without breaking the budget",
 };
 
 export function catalogueProduct(id: string) {
