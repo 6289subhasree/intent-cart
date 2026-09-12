@@ -22,9 +22,19 @@ function outputText(payload: unknown) {
 
 async function recommend(intent: string) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return { recommendation: fallback, mode: "deterministic_fallback" as const };
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey && !geminiKey) return { recommendation: fallback, mode: "deterministic_fallback" as const };
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = geminiKey ? await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(process.env.GEMINI_MODEL || "gemini-2.5-flash")}:generateContent`, {
+      method: "POST",
+      signal: AbortSignal.timeout(30000),
+      headers: { "x-goog-api-key": geminiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: "Select only supplied catalogue IDs that match the buyer request. Stay below INR 2000 (prices are paise). Return JSON with cart (array of product IDs), title (string), fitScore (number from 0 to 1), reasons (object mapping IDs to explanation strings), and rejected (array of objects with id and reason). Never authorize payment." }] },
+        contents: [{ role: "user", parts: [{ text: JSON.stringify({ intent, catalogue }) }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    }) : await fetch("https://api.openai.com/v1/responses", {
       method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: process.env.OPENAI_MODEL ?? "gpt-5-mini", input: [
         { role: "system", content: "Select only supplied catalogue IDs. Stay below INR 2000 (amounts are paise). Return JSON with cart, title, fitScore, reasons and rejected. Never authorize payment." },
@@ -32,7 +42,11 @@ async function recommend(intent: string) {
       ] }),
     });
     if (!response.ok) throw new Error("provider unavailable");
-    const parsed = recommendationSchema.parse(JSON.parse(outputText(await response.json()).replace(/^```json|```$/g, "").trim()));
+    const payload = await response.json();
+    const text = geminiKey
+      ? (payload.candidates?.[0]?.content?.parts ?? []).filter((part: { thought?: boolean }) => !part.thought).map((part: { text?: string }) => part.text ?? "").join("")
+      : outputText(payload);
+    const parsed = recommendationSchema.parse(JSON.parse(text.replace(/^```json|```$/g, "").trim()));
     const knownIds = new Set(catalogue.map((product) => product.id));
     if (parsed.cart.some((id) => !knownIds.has(id))) throw new Error("unknown product");
     if (!evaluateCart(parsed.cart.map((productId) => ({ productId, quantity: 1 }))).passed) throw new Error("policy violation");
