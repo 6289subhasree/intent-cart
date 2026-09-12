@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createServer } from "vite";
+import { fileURLToPath } from "node:url";
 
 import { createD1 } from "./helpers/d1.mjs";
 
@@ -11,6 +13,38 @@ async function worker(db) {
 }
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
+
+test("Gemini recommendations are validated and provider failures fall back", async () => {
+  const db = createD1();
+  globalThis.__INTENTCART_DB__ = db;
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const vite = await createServer({ configFile: false, root, resolve: { alias: { "@": root } }, server: { middlewareMode: true, hmr: false } });
+  const route = await vite.ssrLoadModule("/app/api/agent/route.ts");
+  const run = async () => (await route.POST({ json: async () => ({ intent: "Choose a gentle cleanser under INR 2000" }) })).json();
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = "test-key";
+  try {
+    globalThis.fetch = async (url, options) => {
+      assert.match(String(url), /generativelanguage.googleapis.com/);
+      assert.equal(options.headers["x-goog-api-key"], "test-key");
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ cart: ["sku_cleanser_01"], title: "Gentle cleanser", fitScore: 0.9 }) }] } }] });
+    };
+    const result = await run();
+    assert.equal(result.mode, "ai");
+    assert.equal(result.total, 54900);
+    globalThis.fetch = async () => new Response("Quota exceeded", { status: 429 });
+    const fallback = await run();
+    assert.equal(fallback.mode, "deterministic_fallback");
+    assert.equal(fallback.degradedGracefully, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalKey;
+    db.close();
+    await vite.close();
+  }
+});
 
 async function request(app, db, path, body, method = "POST") {
   return app.fetch(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined }), { DB: db, ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, ctx);
