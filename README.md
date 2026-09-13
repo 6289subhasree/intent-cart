@@ -24,7 +24,8 @@ Checkout runs in a test environment. The full order lifecycle is real applicatio
 ## What works today
 
 - Natural-language shopping requests with schema validation.
-- Model-backed recommendations when an OpenAI key is configured.
+- Model-backed recommendations when a Gemini or OpenAI key is configured.
+- Merchant accounts with a private store, editable sample catalogue and store-scoped records.
 - A deterministic recommendation path when the model is unavailable.
 - Catalogue-only product selection and server-calculated totals.
 - A cart that is populated from the recommendation API response.
@@ -283,6 +284,12 @@ npm run dev
 
 Open the local URL printed by Vite.
 
+Open `/login`, choose **Create a store**, and enter a username, password and store name. Registration creates an owner account and a separate copy of the five sample products. Use **Catalogue** in the merchant sidebar to change your store’s product names, prices, stock and delivery estimates. Open the shopping workspace to try those values in a recommendation.
+
+For an existing Windows checkout, stop Vite with Ctrl+C, run `git pull origin main`, then `npm run dev`. Startup now uses a Node script so PowerShell does not need Bash-style environment assignments. It applies the account migration before opening Vite. Your existing Gemini settings stay in `.env.local`.
+
+Older shopping records had no store owner. The migration keeps them with a null `store_id`; they are excluded from signed-in workspaces rather than being assigned to the first person who registers. A new account therefore starts with an empty dashboard. No old records are deleted, and there is no public “claim old records” endpoint.
+
 `npm run dev` applies unapplied D1 migrations to the local database before starting the app. No API credentials are required for the full persisted cart, policy, failure, repair and test-order flow.
 
 Typical setup time:
@@ -318,6 +325,7 @@ The adapter sends HTTP Basic authentication, an amount in paise and the cart-der
 | `npm run dev` | Apply local migrations and start the app |
 | `npm run db:local` | Apply only the local D1 migrations |
 | `npm run db:generate` | Generate a migration after a schema change |
+| `npm run typecheck` | Generate Cloudflare types and check TypeScript |
 | `npm run build` | Produce the Worker-compatible build |
 | `npm test` | Build and run the full test suite |
 | `npm run evaluate` | Recalculate the controlled evaluation fixture |
@@ -339,7 +347,42 @@ The suite covers the complete session lifecycle, not only isolated helpers:
 - catalogue price calculation and invalid-item handling; and
 - production Worker rendering and shared UI semantics.
 
-The API lifecycle tests use the same SQLite migration as production against an in-memory database, so schema mistakes and query errors fail the suite.
+The API lifecycle tests apply all SQL migrations to an in-memory SQLite database with a D1 adapter. Authentication tests create two actual accounts and exercise separate catalogues, foreign session IDs, scoped analytics, cookie expiry, logout, password changes, origin checks and login throttling. Provider responses are controlled in tests. The local D1 migration is also checked separately; these checks are not a substitute for production security review.
+
+## Merchant accounts and store ownership
+
+Each account owns one store. The server resolves that store from an opaque session cookie, never from a store ID submitted by the browser. Every commerce API requires authentication. Session and audit lookups include the resolved store ID; order records and audit events belong to their parent shopping session. The “latest trace” and merchant totals are also scoped to the signed-in store.
+
+```mermaid
+flowchart TD
+    Browser["Signed-in browser"] --> Gate["Cookie and origin checks"]
+    Gate --> Session["Hashed token and expiry lookup"]
+    Session --> Owner["Merchant → owned store"]
+    Owner --> Catalogue["Store catalogue and version"]
+    Owner --> Cart["Shopping session with store_id"]
+    Catalogue --> Checks["Server price and policy checks"]
+    Cart --> Checks
+    Checks --> Claim["Atomic checkout claim"]
+    Claim --> Order["Order attached to that session"]
+    Cart --> Audit["Store-scoped audit and analytics"]
+    Order --> Audit
+```
+
+Passwords use PBKDF2-HMAC-SHA256 with a random salt and 600,000 iterations. The database stores only a SHA-256 digest of each random 256-bit session token. Sessions expire after seven days; logout deletes the token record. Password changes revoke existing sessions and issue a fresh cookie. Cookies are HttpOnly and SameSite=Strict, with Secure enabled on HTTPS. State-changing APIs reject missing or mismatched origins and oversized request bodies. Sign-in and registration have database-backed rate limits. The password work factor follows the [OWASP password-storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html); the implementation uses [Cloudflare’s supported Node crypto API](https://developers.cloudflare.com/workers/runtime-apis/nodejs/crypto/).
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/auth/register` | Create an owner and a store; sign in |
+| `POST /api/auth/login` | Verify credentials and issue a session |
+| `GET /api/auth/me` | Return the current owner’s store identity |
+| `POST /api/auth/logout` | Revoke the current session |
+| `POST /api/auth/password` | Change password and revoke other sessions |
+| `GET /api/catalogue` | Read the owner’s catalogue and version |
+| `PUT /api/catalogue` | Update that catalogue using its current version |
+
+Catalogue edits affect only the owner’s store. Recommendation and fallback logic receive that catalogue explicitly; they do not mutate a shared module-level list. Checkout recalculates against the current store catalogue and rejects a changed total. Its database claim also checks the catalogue version, closing the gap if a catalogue edit wins just before checkout.
+
+This release is a private owner workspace, not yet a public storefront. Staff invitations, password recovery, MFA, account deletion, general product import and per-store payment-provider credentials are still missing. Save your password. The catalogue editor manages the existing five product categories; renaming a product does not change its category. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
 
 ## Repository map
 
@@ -383,7 +426,7 @@ worker/index.ts              Cloudflare Worker entry point
 
 - Merchant-managed catalogue ingestion instead of the bundled five-product catalogue.
 - Webhook-driven inventory updates.
-- Authentication and merchant-level data isolation.
+- Staff roles, password recovery, MFA and public shopper access with session ownership.
 - Expiring approval tokens for long-running carts.
 - Provider webhook reconciliation for order status.
 - Observability around model latency, fallback rate and policy rejection reasons.

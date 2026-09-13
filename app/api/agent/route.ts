@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { withMerchant, readJson, rateLimit } from "@/lib/auth";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createSession, type AuditEventInput, type StoredSession } from "@/db/repository";
-import { CATALOGUE_VERSION, catalogue, displayCart, type CartLine } from "@/lib/commerce";
+import { displayCart, type CatalogueProduct, type CartLine } from "@/lib/commerce";
 
 import { parseShoppingIntent, eligibleProducts, evaluateIntentCart, fallbackRecommendation, coversRequestedCategories } from "@/lib/shopping-intent";
 
@@ -18,9 +19,9 @@ function outputText(payload: unknown) {
   return response.output_text ?? response.output?.flatMap((item) => item.content ?? []).map((item) => item.text ?? "").join("") ?? "";
 }
 
-async function recommend(intent: string, constraints: ReturnType<typeof parseShoppingIntent>, createdAt: Date) {
-  const fallback = fallbackRecommendation(constraints);
-  const products = eligibleProducts(constraints);
+async function recommend(intent: string, constraints: ReturnType<typeof parseShoppingIntent>, createdAt: Date, catalogue: CatalogueProduct[]) {
+  const fallback = fallbackRecommendation(constraints, catalogue);
+  const products = eligibleProducts(constraints, catalogue);
   const apiKey = process.env.OPENAI_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;
   if (!apiKey && !geminiKey) return { recommendation: fallback, mode: "deterministic_fallback" as const };
@@ -50,30 +51,34 @@ async function recommend(intent: string, constraints: ReturnType<typeof parseSho
     const knownIds = new Set(catalogue.map((product) => product.id));
     if (parsed.cart.some((id) => !knownIds.has(id))) throw new Error("unknown product");
     if (!coversRequestedCategories(parsed.cart, constraints)) throw new Error("requested category missing");
-    if (!evaluateIntentCart(parsed.cart.map((productId) => ({ productId, quantity: 1 })), intent, constraints.budget, createdAt).passed) throw new Error("policy violation");
+    if (!evaluateIntentCart(parsed.cart.map((productId) => ({ productId, quantity: 1 })), intent, constraints.budget, createdAt, [], catalogue).passed) throw new Error("policy violation");
     return { recommendation: parsed, mode: "ai" as const };
   } catch {
     return { recommendation: fallback, mode: "deterministic_fallback" as const, degradedGracefully: true };
   }
 }
 
-export async function POST(request: NextRequest) {
-  const parsed = requestSchema.safeParse(await request.json().catch(() => null));
+export const POST = withMerchant(async (request, merchant) => {
+  await rateLimit(`agent:${merchant.merchantId}`, 30);
+  const catalogue = merchant.catalogue;
+  const CATALOGUE_VERSION = merchant.catalogueVersion;
+  const parsed = requestSchema.safeParse(await readJson(request));
   if (!parsed.success) return NextResponse.json({ error: "A valid shopping intent is required." }, { status: 400 });
   const at = new Date();
   const constraints = parseShoppingIntent(parsed.data.intent, at);
   if (constraints.error) return NextResponse.json({ error: constraints.error, code: "CLARIFICATION_REQUIRED" }, { status: 422 });
-  const result = await recommend(parsed.data.intent, constraints, at);
+  const result = await recommend(parsed.data.intent, constraints, at, catalogue);
   if (!result.recommendation.cart.length) return NextResponse.json({
     error: "No matching products fit this budget and these requirements. Try changing your budget, product selection or delivery request.",
     code: "NO_MATCH", constraints,
   }, { status: 422 });
   const lines: CartLine[] = result.recommendation.cart.map((productId) => ({ productId, quantity: 1 }));
-  const policy = evaluateIntentCart(lines, parsed.data.intent, constraints.budget, at);
+  const policy = evaluateIntentCart(lines, parsed.data.intent, constraints.budget, at, [], catalogue);
+  policy.catalogueVersion = merchant.catalogueVersion;
   const createdAt = at.toISOString();
-  const id = `IC-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const id = `IC-${crypto.randomUUID()}`;
   const session: StoredSession = {
-    id, intent: parsed.data.intent, title: result.recommendation.title, mode: result.mode, status: "ready", budget: constraints.budget,
+    id, storeId: merchant.storeId, intent: parsed.data.intent, title: result.recommendation.title, mode: result.mode, status: "ready", budget: constraints.budget,
     total: policy.total, currency: "INR", cartVersion: `${id}-v1`, fitScore: result.recommendation.fitScore, cart: lines, policy,
     createdAt, updatedAt: createdAt, approvedAt: null, orderId: null,
   };
@@ -89,5 +94,5 @@ export async function POST(request: NextRequest) {
     console.error("Failed to persist recommendation session", error);
     return NextResponse.json({ error: "The cart could not be saved. Please try again." }, { status: 503 });
   }
-  return NextResponse.json({ ...session, items: displayCart(lines, result.recommendation.reasons), rejected: result.recommendation.rejected ?? [], catalogueVersion: CATALOGUE_VERSION, degradedGracefully: "degradedGracefully" in result ? result.degradedGracefully : false });
-}
+  return NextResponse.json({ ...session, items: displayCart(lines, result.recommendation.reasons, catalogue), rejected: result.recommendation.rejected ?? [], catalogueVersion: CATALOGUE_VERSION, degradedGracefully: "degradedGracefully" in result ? result.degradedGracefully : false });
+});

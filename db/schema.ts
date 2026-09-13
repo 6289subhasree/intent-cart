@@ -1,7 +1,21 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const merchants = sqliteTable("merchants", {
+  id: text("id").primaryKey(), username: text("username").notNull().unique(), passwordHash: text("password_hash").notNull(), createdAt: text("created_at").notNull(),
+});
+export const stores = sqliteTable("stores", {
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull().unique().references(() => merchants.id), name: text("name").notNull(), catalogueJson: text("catalogue_json").notNull(), catalogueVersion: text("catalogue_version").notNull(), createdAt: text("created_at").notNull(),
+});
+export const authSessions = sqliteTable("auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(), merchantId: text("merchant_id").notNull().references(() => merchants.id), expiresAt: integer("expires_at").notNull(),
+}, (table) => [index("idx_auth_expiry").on(table.expiresAt)]);
+export const rateLimits = sqliteTable("rate_limits", {
+  key: text("key").primaryKey(), count: integer("count").notNull(), expiresAt: integer("expires_at").notNull(),
+});
+
 export const shoppingSessions = sqliteTable("shopping_sessions", {
   id: text("id").primaryKey(),
+  storeId: text("store_id").references(() => stores.id),
   intent: text("intent").notNull(),
   title: text("title").notNull(),
   mode: text("mode").notNull(),

@@ -15,6 +15,7 @@ export type CatalogueProduct = {
 export type CartLine = { productId: string; quantity: number };
 
 export type PolicyResult = {
+  catalogueVersion?: string;
   unavailableProductIds?: string[];
   checkoutAttempt?: { id: string; state: "pending" | "unknown" | "completed"; idempotencyKey: string; providerOrderId?: string };
   withinBudget: boolean;
@@ -47,8 +48,8 @@ export const defaultReasons: Record<string, string> = {
   sku_wrap_01: "Adds a finished gift experience without breaking the budget",
 };
 
-export function catalogueProduct(id: string) {
-  return catalogue.find((product) => product.id === id);
+export function catalogueProduct(id: string, products = catalogue) {
+  return products.find((product) => product.id === id);
 }
 
 export function normalizeLines(lines: CartLine[]) {
@@ -57,18 +58,18 @@ export function normalizeLines(lines: CartLine[]) {
   return [...quantities].filter(([, quantity]) => quantity > 0).map(([productId, quantity]) => ({ productId, quantity }));
 }
 
-export function evaluateCart(lines: CartLine[], budget = DEFAULT_BUDGET, forcedUnavailable: string[] = []): PolicyResult & { total: number } {
+export function evaluateCart(lines: CartLine[], budget = DEFAULT_BUDGET, forcedUnavailable: string[] = [], products = catalogue): PolicyResult & { total: number } {
   const normalized = normalizeLines(lines);
-  const missing = normalized.filter((line) => !catalogueProduct(line.productId));
+  const missing = normalized.filter((line) => !catalogueProduct(line.productId, products));
   const quantitiesValid = normalized.length > 0 && lines.every((line) => Number.isInteger(line.quantity) && line.quantity >= 0) && missing.length === 0 && normalized.every((line) => Number.isInteger(line.quantity) && line.quantity >= 1 && line.quantity <= 3);
   const total = quantitiesValid
-    ? normalized.reduce((sum, line) => sum + (catalogueProduct(line.productId)?.price ?? 0) * line.quantity, 0)
+    ? normalized.reduce((sum, line) => sum + (catalogueProduct(line.productId, products)?.price ?? 0) * line.quantity, 0)
     : 0;
   const stockValid = quantitiesValid && normalized.every((line) => {
-    const product = catalogueProduct(line.productId);
+    const product = catalogueProduct(line.productId, products);
     return Boolean(product && product.stock >= line.quantity && !forcedUnavailable.includes(line.productId));
   });
-  const deliveryValid = quantitiesValid && normalized.every((line) => (catalogueProduct(line.productId)?.deliveryDays ?? 99) <= 4);
+  const deliveryValid = quantitiesValid && normalized.every((line) => (catalogueProduct(line.productId, products)?.deliveryDays ?? 99) <= 4);
   const withinBudget = quantitiesValid && total <= budget;
   const violations = [
     ...(!quantitiesValid ? ["Cart contains an unknown product or invalid quantity."] : []),
@@ -79,9 +80,9 @@ export function evaluateCart(lines: CartLine[], budget = DEFAULT_BUDGET, forcedU
   return { total, withinBudget, stockValid, deliveryValid, quantitiesValid, approvalRequired: true, passed: violations.length === 0, violations };
 }
 
-export function displayCart(lines: CartLine[], reasons: Record<string, string> = defaultReasons): DisplayCartItem[] {
+export function displayCart(lines: CartLine[], reasons: Record<string, string> = defaultReasons, products = catalogue): DisplayCartItem[] {
   return normalizeLines(lines).flatMap((line) => {
-    const product = catalogueProduct(line.productId);
+    const product = catalogueProduct(line.productId, products);
     return product ? [{ ...product, quantity: line.quantity, reason: reasons[product.id] ?? defaultReasons[product.id] }] : [];
   });
 }

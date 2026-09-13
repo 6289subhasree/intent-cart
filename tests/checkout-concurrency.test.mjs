@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
-import { createD1 } from "./helpers/d1.mjs";
+import { createD1, testRequest } from "./helpers/d1.mjs";
 
 test("durable checkout claim prevents concurrent provider calls, edits and uncertain retries", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
@@ -14,7 +14,7 @@ test("durable checkout claim prevents concurrent provider calls, edits and uncer
   const originalFetch = globalThis.fetch;
   const envNames = ["GEMINI_API_KEY", "OPENAI_API_KEY", "PAYMENT_ORDER_API_URL", "PAYMENT_KEY_ID", "PAYMENT_KEY_SECRET"];
   const originalEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
-  const post = (route, body) => route.POST({ json: async () => body });
+  const post = (route, body) => route.POST(testRequest(body));
   try {
     delete process.env.GEMINI_API_KEY; delete process.env.OPENAI_API_KEY;
     process.env.PAYMENT_ORDER_API_URL = "https://orders.example.test/orders";
@@ -43,14 +43,14 @@ test("durable checkout claim prevents concurrent provider calls, edits and uncer
         await started;
         assert.equal((await post(checkout, body)).status, 409);
         assert.equal((await post(cartRoute, { sessionId: cart.id, cartVersion: cart.cartVersion, action: "update", items: [] })).status, 409);
-        const pending = await repo.getSession(cart.id);
+        const pending = await repo.getSession(cart.id, "test-store");
         assert.equal(pending.status, "approved");
         assert.equal(pending.policy.checkoutAttempt.state, "pending");
         release();
         assert.equal((await first).status, outcome === "success" ? 200 : 502);
         assert.equal((await post(checkout, body)).status, outcome === "success" ? 200 : 409);
         assert.equal(calls, 1, outcome);
-        const trace = await repo.getAuditBundle(cart.id);
+        const trace = await repo.getAuditBundle(cart.id, "test-store");
         assert.equal(trace.events.filter((event) => event.title === "Buyer approved exact cart and amount").length, 1);
         assert.deepEqual(trace.events.map((event) => event.sequence), trace.events.map((_, index) => index + 1));
         assert.equal(trace.session.status, outcome === "success" ? "ordered" : "approved");
@@ -75,13 +75,15 @@ test("cart writes compare versions atomically and inventory exclusions survive u
   const db = createD1(); globalThis.__INTENTCART_DB__ = db;
   const lines = [{ productId: "sku_spf_07", quantity: 1 }];
   const session = { id: "IC-concurrency", intent: "Only sunscreen under ₹2000", title: "Sunscreen", mode: "deterministic_fallback", status: "ready", budget: 200000, total: 59900, currency: "INR", cartVersion: "initial-version", fitScore: 0, cart: lines, policy: commerce.evaluateCart(lines), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), approvedAt: null, orderId: null };
-  const post = (body) => cartRoute.POST({ json: async () => body });
+  session.storeId = "test-store";
+  session.policy.catalogueVersion = "test-version";
+  const post = (body) => cartRoute.POST(testRequest(body));
   try {
     await repo.createSession(session, []);
     const writes = await Promise.all(["one", "two"].map((suffix) => repo.updateSession({ ...session, cartVersion: `version-${suffix}` }, [{ type: "BUYER", state: "complete", title: suffix, detail: suffix }], session.cartVersion)));
     assert.deepEqual(writes.sort(), [false, true]);
-    let current = await repo.getSession(session.id);
-    assert.equal((await repo.getAuditBundle(session.id)).events.length, 1);
+    let current = await repo.getSession(session.id, "test-store");
+    assert.equal((await repo.getAuditBundle(session.id, "test-store")).events.length, 1);
     current = await (await post({ sessionId: current.id, cartVersion: current.cartVersion, action: "conflict" })).json();
     assert.deepEqual(current.policy.unavailableProductIds, ["sku_spf_07"]);
     current = await (await post({ sessionId: current.id, cartVersion: current.cartVersion, action: "update", items: lines })).json();
@@ -90,7 +92,7 @@ test("cart writes compare versions atomically and inventory exclusions survive u
     const repair = await post({ sessionId: current.id, cartVersion: current.cartVersion, action: "repair" });
     assert.equal(repair.status, 409);
     assert.equal((await repair.json()).code, "NO_REPLACEMENT");
-    assert.deepEqual((await repo.getSession(session.id)).policy.unavailableProductIds, ["sku_spf_07"]);
+    assert.deepEqual((await repo.getSession(session.id, "test-store")).policy.unavailableProductIds, ["sku_spf_07"]);
     const winners = await Promise.all([
       repo.updateSession({ ...current, cartVersion: "last-edit" }, [], current.cartVersion),
       repo.claimCheckout({ ...current, status: "ready" }, "test-key"),
@@ -105,7 +107,7 @@ test("cart writes compare versions atomically and inventory exclusions survive u
       const actions = reverse ? [approve, edit] : [edit, approve];
       const results = await Promise.all(actions.map((action) => action()));
       assert.equal(results.filter(Boolean).length, 1);
-      const saved = await repo.getSession(fresh.id);
+      const saved = await repo.getSession(fresh.id, "test-store");
       assert.ok(saved.status === "approved" || saved.cartVersion === `edited-${reverse}`);
     }
   } finally { db.close(); delete globalThis.__INTENTCART_DB__; await vite.close(); }

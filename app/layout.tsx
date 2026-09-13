@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Manrope } from "next/font/google";
 import "./globals.css";
+import "./account.css";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
 const manrope = Manrope({ subsets: ["latin"], variable: "--font-manrope" });

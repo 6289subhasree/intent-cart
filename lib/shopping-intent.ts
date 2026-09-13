@@ -56,8 +56,8 @@ export function parseShoppingIntent(text: string, at = new Date()) {
   return { budget, budgetSpecified: Boolean(amount), requested, excluded: [...excluded], sensitive, fragranceFree, deliveryDays, error };
 }
 
-export function eligibleProducts(intent: ReturnType<typeof parseShoppingIntent>) {
-  return catalogue.filter((product) => {
+export function eligibleProducts(intent: ReturnType<typeof parseShoppingIntent>, products = catalogue) {
+  return products.filter((product) => {
     const category = categoryById[product.id];
     return !intent.excluded.includes(category)
       && (!intent.requested.length || intent.requested.includes(category))
@@ -68,11 +68,11 @@ export function eligibleProducts(intent: ReturnType<typeof parseShoppingIntent>)
   });
 }
 
-export function evaluateIntentCart(lines: CartLine[], text: string, budget: number, at = new Date(), unavailable: string[] = []) {
+export function evaluateIntentCart(lines: CartLine[], text: string, budget: number, at = new Date(), unavailable: string[] = [], products = catalogue) {
   const intent = parseShoppingIntent(text, at);
-  const policy = evaluateCart(lines, budget, unavailable);
+  const policy = evaluateCart(lines, budget, unavailable, products);
   policy.unavailableProductIds = [...unavailable];
-  const allowed = new Set(eligibleProducts(intent).map((product) => product.id));
+  const allowed = new Set(eligibleProducts(intent, products).map((product) => product.id));
   const matches = !intent.error && normalizeLines(lines).every((line) => allowed.has(line.productId));
   if (!matches) {
     policy.passed = false;
@@ -81,10 +81,10 @@ export function evaluateIntentCart(lines: CartLine[], text: string, budget: numb
   return policy;
 }
 
-export function fallbackRecommendation(intent: ReturnType<typeof parseShoppingIntent>) {
+export function fallbackRecommendation(intent: ReturnType<typeof parseShoppingIntent>, source = catalogue) {
   let remaining = intent.budget;
   const chosen = new Set<Category>();
-  const products = eligibleProducts(intent).filter((product) => {
+  const products = eligibleProducts(intent, source).filter((product) => {
     const category = categoryById[product.id];
     if (chosen.has(category) || (category === "wrap" && !intent.requested.includes("wrap")) || product.price > remaining) return false;
     chosen.add(category);

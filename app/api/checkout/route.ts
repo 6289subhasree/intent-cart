@@ -1,20 +1,22 @@
 import { evaluateIntentCart } from "@/lib/shopping-intent";
-import { NextRequest, NextResponse } from "next/server";
+import { withMerchant, readJson } from "@/lib/auth";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { claimCheckout, completeOrder, getSession, markCheckoutUnknown } from "@/db/repository";
 
 const schema = z.object({ sessionId: z.string().min(5), cartVersion: z.string().min(5), approval: z.literal(true) });
 const orderSchema = z.object({ id: z.string().min(1), amount: z.number().int().positive(), currency: z.literal("INR"), status: z.string().min(1) });
 
-export async function POST(request: NextRequest) {
-  const parsed = schema.safeParse(await request.json().catch(() => null));
+export const POST = withMerchant(async (request, merchant) => {
+  const parsed = schema.safeParse(await readJson(request));
   if (!parsed.success) return NextResponse.json({ error: "Checkout blocked: exact approval and a current cart are required." }, { status: 400 });
-  const session = await getSession(parsed.data.sessionId);
+  const session = await getSession(parsed.data.sessionId, merchant.storeId);
   if (!session) return NextResponse.json({ error: "Checkout blocked: shopping session not found." }, { status: 404 });
   if (session.cartVersion !== parsed.data.cartVersion) return NextResponse.json({ error: "Checkout blocked: the approved cart version is stale." }, { status: 409 });
   if (session.status === "ordered" && session.orderId) return NextResponse.json({ id: session.orderId, amount: session.total, currency: session.currency, status: "created", reused: true });
   if (session.status === "approved") return NextResponse.json({ error: "Checkout is already in progress or awaiting review. Do not submit a replacement order.", code: "CHECKOUT_LOCKED" }, { status: 409 });
-  const policy = evaluateIntentCart(session.cart, session.intent, session.budget, new Date(session.createdAt), session.policy.unavailableProductIds ?? []);
+  const policy = evaluateIntentCart(session.cart, session.intent, session.budget, new Date(session.createdAt), session.policy.unavailableProductIds ?? [], merchant.catalogue);
+  policy.catalogueVersion = merchant.catalogueVersion;
   if (!policy.passed || session.status !== "ready" || policy.total !== session.total) return NextResponse.json({ error: `Checkout blocked: ${policy.violations[0] ?? "cart policy changed."}` }, { status: 409 });
 
   const idempotencyKey = `intentcart-${session.cartVersion}-${policy.total}`;
@@ -50,9 +52,9 @@ export async function POST(request: NextRequest) {
     ]);
     return NextResponse.json({ ...providerOrder, mode, idempotencyKey, sessionId: session.id });
   } catch {
-    const completed = await getSession(session.id).catch(() => null);
+    const completed = await getSession(session.id, merchant.storeId).catch(() => null);
     if (completed?.status === "ordered" && completed.orderId) return NextResponse.json({ id: completed.orderId, amount: completed.total, currency: completed.currency, status: "created", reused: true });
     await markCheckoutUnknown(claimed, observedProviderOrderId).catch(() => undefined);
     return NextResponse.json({ error: "The order outcome could not be confirmed. This cart is locked for review to prevent a duplicate order. Check its audit trail before taking further action.", code: "ORDER_REVIEW_REQUIRED", retryable: false }, { status: 502 });
   }
-}
+});

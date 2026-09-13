@@ -7,7 +7,7 @@
   },
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
-    "dev": "npm run db:local && WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
+    "dev": "node scripts/local.mjs dev",
     "build": "bash scripts/build-verified.sh",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
@@ -15,7 +15,7 @@
     "evaluate": "node scripts/evaluate.mjs",
     "typecheck": "wrangler types worker-configuration.d.ts --config wrangler.local.jsonc && tsc --noEmit",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
-    "db:local": "CI=1 wrangler d1 migrations apply site-creator-d1 --local --config wrangler.local.jsonc"
+    "db:local": "node scripts/local.mjs db"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

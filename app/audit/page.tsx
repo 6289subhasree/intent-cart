@@ -8,6 +8,8 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 
+import { AccountMenu } from "@/components/merchant-account";
+
 type Session = { id: string; intent: string; title: string; status: string; total: number; budget: number; currency: string; cartVersion: string; policy: { passed: boolean }; approvedAt: string | null; orderId: string | null; mode: string };
 type Event = { id: string; sequence: number; type: string; state: "complete" | "failure" | "repair" | "waiting"; title: string; detail: string; metadata: Record<string, unknown>; createdAt: string };
 type Bundle = { session: Session; events: Event[] };
@@ -32,6 +34,7 @@ export default function AuditPage() {
 
   return (
     <main className="audit-shell">
+      <AccountMenu />
       <header className="audit-nav"><a className="audit-logo" href="/"><span><ShoppingBag /></span>intentcart</a><div><Badge variant="outline">PERSISTED EVENT LOG</Badge><a href="/demo"><ArrowLeft />Back to buyer demo</a></div></header>
       {!bundle ? <section className="audit-empty"><Fingerprint /><h1>{error ? "No trace to inspect yet" : "Loading the latest trace…"}</h1><p>{error ?? "Reading the saved recommendation, policy and order events."}</p>{error && <a href="/demo">Start a shopping session <ArrowLeft /></a>}</section> : <>
         <section className="audit-title"><div><p>TRACE · {bundle.session.id}</p><h1>One checkout.<br /><em>Every decision visible.</em></h1></div><div className="audit-summary"><article><span>CURRENT AMOUNT</span><strong>{money(bundle.session.total)}</strong></article><article><span>POLICY RESULT</span><strong className={bundle.session.policy.passed ? "passed" : "handled"}>{bundle.session.policy.passed && <Check />} {bundle.session.policy.passed ? "Passed" : "Blocked"}</strong></article><article><span>FAILURES</span><strong className="handled">{failures} handled</strong></article><article><span>MONEY ACTIONS</span><strong>{moneyActions} approved</strong></article></div></section>

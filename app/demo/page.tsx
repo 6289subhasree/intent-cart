@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight, Bot, Check, CheckCircle2, ChevronDown, CircleDollarSign, Clock3, CreditCard, Gift, Minus,
   PackageCheck, Plus, RefreshCw, Search, ShieldCheck, ShoppingBag, Sparkles, Tag, Trash2, TriangleAlert,
@@ -12,6 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { eligibleProducts, parseShoppingIntent } from "@/lib/shopping-intent";
+
+import { AccountMenu, useMerchantAccount } from "@/components/merchant-account";
+import type { CatalogueProduct } from "@/lib/commerce";
 
 type Product = {
   id: string; name: string; detail: string; price: number; crop: string; reason: string; quantity: number; deliveryDays?: number;
@@ -26,11 +29,6 @@ type SessionPayload = {
   cartVersion: string; fitScore: number; mode: "ai" | "deterministic_fallback"; policy: Policy; items: Product[];
 };
 
-const starterProducts: Product[] = [
-  { id: "sku_cleanser_01", name: "Dewdrop Cleanser", detail: "120 ml · Gentle daily wash", price: 54_900, crop: "product-one", reason: "Fragrance-free and suited to sensitive skin", quantity: 1 },
-  { id: "sku_serum_04", name: "Bright C Serum", detail: "30 ml · 10% vitamin C", price: 74_900, crop: "product-two", reason: "Adds a gift-worthy treatment within budget", quantity: 1 },
-  { id: "sku_spf_07", name: "Cloudveil SPF 50", detail: "50 g · No white cast", price: 59_900, crop: "product-three", reason: "Completes a practical morning routine", quantity: 1 },
-];
 
 const defaultIntent = "Build a skincare gift for my sister under ₹2,000. She has sensitive skin, and I need it delivered by Friday.";
 const money = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
@@ -38,7 +36,10 @@ const money = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
 export default function DemoPage() {
   const [request, setRequest] = useState(defaultIntent);
   const [session, setSession] = useState<SessionPayload | null>(null);
-  const [products, setProducts] = useState(starterProducts);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [storeCatalogue, setStoreCatalogue] = useState<CatalogueProduct[]>([]);
+  const account = useMerchantAccount();
+  useEffect(() => { fetch("/api/catalogue").then(async (response) => { if (!response.ok) return; const data = await response.json() as { products: CatalogueProduct[] }; setStoreCatalogue(data.products); }); }, []);
   const [stage, setStage] = useState<"ready" | "thinking" | "built">("ready");
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [paid, setPaid] = useState(false);
@@ -62,10 +63,10 @@ export default function DemoPage() {
     /\b(?:no|without|exclude|skip|avoid|don't|do not)\b[^.!?;]*\b(?:gift[ -]?wrap|wrapping)\b/i.test(text)
     || /\bonly\b/i.test(text);
   const showGiftWrap = !draftChanged && !excludesWrap(request) && !excludesWrap(session?.intent ?? request)
-    && eligibleProducts(parseShoppingIntent(session?.intent ?? request)).some((product) => product.id === "sku_wrap_01")
+    && eligibleProducts(parseShoppingIntent(session?.intent ?? request), storeCatalogue).some((product) => product.id === "sku_wrap_01")
     && /\bgift\b/i.test(session?.intent ?? request)
     && !products.some((product) => product.id === "sku_wrap_01" && product.quantity > 0)
-    && remaining >= 7900;
+    && remaining >= (storeCatalogue.find((product) => product.id === "sku_wrap_01")?.price ?? Infinity);
   const deliveryDays = Math.max(0, ...products.filter((product) => product.quantity > 0).map((product) => product.deliveryDays ?? 0));
   const deliveryEstimate = session && deliveryDays ? `Estimated delivery: ${deliveryDays} days` : "Delivery estimate unavailable";
   const unavailableNames = products.filter((product) => session?.policy.unavailableProductIds?.includes(product.id) && product.quantity > 0).map((product) => product.name);
@@ -124,11 +125,12 @@ export default function DemoPage() {
   }
 
   function addGiftWrap() {
-    if (!showGiftWrap) return;
+    const wrap = storeCatalogue.find((product) => product.id === "sku_wrap_01");
+    if (!showGiftWrap || !wrap) return;
     const existing = products.find((product) => product.id === "sku_wrap_01");
     const next = existing
       ? products.map((product) => product.id === existing.id ? { ...product, quantity: Math.min(3, product.quantity + 1) } : product)
-      : [...products, { id: "sku_wrap_01", name: "Reusable Gift Wrap", detail: "Cotton wrap · Gift note included", price: 7_900, crop: "product-one", reason: "Adds a finished gift experience without breaking the budget", quantity: 1 }];
+      : [...products, { id: "sku_wrap_01", name: "Reusable Gift Wrap", detail: "Cotton wrap · Gift note included", price: wrap.price, crop: "product-one", reason: "Adds a finished gift experience without breaking the budget", quantity: 1 }];
     void changeCart("update", next);
   }
 
@@ -151,7 +153,7 @@ export default function DemoPage() {
       <header className="topbar">
         <a className="brand" href="/" aria-label="IntentCart home"><span className="brand-glyph"><ShoppingBag size={19} strokeWidth={2.3} /></span><span>Intent<span>Cart</span></span></a>
         <nav aria-label="Primary"><a className="active" href="#shop">Shop with AI</a><a href={auditHref}>Audit trail</a><a href="/merchant">Merchant view</a></nav>
-        <div className="top-actions"><button className="merchant-pill"><span>NV</span> Nova Beauty <ChevronDown size={14} /></button><button className="profile-button" aria-label="Profile"><UserRound size={18} /></button></div>
+        <div className="top-actions"><AccountMenu /></div>
       </header>
 
       <section className="workspace" id="shop">
@@ -178,7 +180,7 @@ export default function DemoPage() {
             {inventoryFailure && <div className="failure-banner" role="alert"><TriangleAlert /><span><strong>Inventory changed before checkout</strong>{unavailableNames.join(", ")} unavailable. Remove the affected item or try a replacement.</span><Button size="sm" disabled={busyAction !== null} onClick={() => void changeCart("repair")}><RefreshCw />{busyAction === "repair" ? "Repairing…" : "Repair cart"}</Button></div>}
             {repaired && !inventoryFailure && <div className="repair-banner" role="status"><CheckCircle2 /><span><strong>Cart repaired and revalidated</strong>The replacement selection was checked against your request and budget. Review it before approval.</span></div>}
             <div className="product-list">{products.filter((product) => product.quantity > 0).map((product) => <article className="product-row" key={product.id}><div className={`product-image ${product.crop}`} role="img" aria-label={`${product.name} product photo`} /><div className="product-copy"><div className="product-title"><div><h3>{product.name}</h3><p>{product.detail}</p></div><strong>{money(product.price)}</strong></div><div className="agent-reason"><Sparkles size={13} /><span>{product.reason}</span></div></div><div className="quantity-control" aria-label={`Quantity of ${product.name}`}><button disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={() => updateQuantity(product.id, -1)} aria-label={`Remove one ${product.name}`}>{product.quantity === 1 ? <Trash2 /> : <Minus />}</button><span>{product.quantity}</span><button disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={() => updateQuantity(product.id, 1)} aria-label={`Add one ${product.name}`}><Plus /></button></div></article>)}</div>
-            {showGiftWrap && <div className="upsell-card"><div className="upsell-icon"><Tag /></div><div><Badge variant="outline">Bounded upsell</Badge><h3>Add reusable gift wrap for ₹79?</h3><p>The server checks the new total before it changes your saved cart.</p></div><Button variant="outline" size="sm" disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={addGiftWrap}>Add</Button></div>}
+            {showGiftWrap && <div className="upsell-card"><div className="upsell-icon"><Tag /></div><div><Badge variant="outline">Bounded upsell</Badge><h3>Add reusable gift wrap for {money(storeCatalogue.find((product) => product.id === "sku_wrap_01")?.price ?? 0)}?</h3><p>The server checks the new total before it changes your saved cart.</p></div><Button variant="outline" size="sm" disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={addGiftWrap}>Add</Button></div>}
           </>}
         </section>
 
@@ -196,7 +198,7 @@ export default function DemoPage() {
 
       <section className="audit-bar" id="audit"><div><span className="audit-icon"><ShieldCheck /></span><div><strong>Every action joins one trace</strong><p>Recommendation, edits, policy decisions, approval and order creation share the same session ID.</p></div></div><div className="audit-events"><span><Check /> Intent parsed</span><i /><span><Check /> Cart bounded</span><i /><span className="pending-dot" />{paid ? "Order recorded" : "Approval pending"}</div><a href={auditHref}>Open audit trail <ArrowRight size={15} /></a></section>
 
-      <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}><DialogContent className="checkout-dialog">{paid ? <div className="paid-state"><span><Check /></span><h2>Order created</h2><p>{session?.id} is complete. The recommendation, approval, exact amount and order are stored in one trace.</p><a className="trace-link" href={auditHref}>View audit trail <ArrowRight /></a></div> : <><DialogHeader><Badge className="checkout-badge">TEST CHECKOUT</Badge><DialogTitle>Approve {money(total)} checkout</DialogTitle><DialogDescription>This approval applies only to {session?.cartVersion}. Any later cart change invalidates it.</DialogDescription></DialogHeader><div className="dialog-summary"><span>Nova Beauty</span><strong>{money(total)}</strong><p>{products.reduce((sum, product) => sum + product.quantity, 0)} items · {deliveryEstimate}</p></div><div className="payment-method"><span className="card-chip"><CreditCard /></span><div><strong>Test Visa</strong><p>•••• 1111</p></div><CheckCircle2 /></div><div className="dialog-guardrail"><ShieldCheck /><span><strong>Server-verified checkout</strong>The server reloads this cart, recalculates the total, and checks its current version before creating an order.</span></div>{error && <div className="checkout-error"><TriangleAlert /><span><strong>Checkout stopped safely</strong>{error}</span></div>}<DialogFooter><Button variant="outline" onClick={() => setCheckoutOpen(false)}>Cancel</Button><Button className="pay-button" disabled={checkoutLocked || draftChanged || busyAction !== null} onClick={approvePayment}>{busyAction === "checkout" ? "Verifying…" : "Approve test order"} <ArrowRight /></Button></DialogFooter></>}</DialogContent></Dialog>
+      <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}><DialogContent className="checkout-dialog">{paid ? <div className="paid-state"><span><Check /></span><h2>Order created</h2><p>{session?.id} is complete. The recommendation, approval, exact amount and order are stored in one trace.</p><a className="trace-link" href={auditHref}>View audit trail <ArrowRight /></a></div> : <><DialogHeader><Badge className="checkout-badge">TEST CHECKOUT</Badge><DialogTitle>Approve {money(total)} checkout</DialogTitle><DialogDescription>This approval applies only to {session?.cartVersion}. Any later cart change invalidates it.</DialogDescription></DialogHeader><div className="dialog-summary"><span>{account?.storeName}</span><strong>{money(total)}</strong><p>{products.reduce((sum, product) => sum + product.quantity, 0)} items · {deliveryEstimate}</p></div><div className="payment-method"><span className="card-chip"><CreditCard /></span><div><strong>Test Visa</strong><p>•••• 1111</p></div><CheckCircle2 /></div><div className="dialog-guardrail"><ShieldCheck /><span><strong>Server-verified checkout</strong>The server reloads this cart, recalculates the total, and checks its current version before creating an order.</span></div>{error && <div className="checkout-error"><TriangleAlert /><span><strong>Checkout stopped safely</strong>{error}</span></div>}<DialogFooter><Button variant="outline" onClick={() => setCheckoutOpen(false)}>Cancel</Button><Button className="pay-button" disabled={checkoutLocked || draftChanged || busyAction !== null} onClick={approvePayment}>{busyAction === "checkout" ? "Verifying…" : "Approve test order"} <ArrowRight /></Button></DialogFooter></>}</DialogContent></Dialog>
     </main>
   );
 }

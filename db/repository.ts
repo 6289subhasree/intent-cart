@@ -16,6 +16,7 @@ export type SessionStatus = "ready" | "blocked" | "approved" | "ordered";
 
 export type StoredSession = {
   id: string;
+  storeId?: string | null;
   intent: string;
   title: string;
   mode: string;
@@ -47,7 +48,7 @@ export type AuditEvent = AuditEventInput & {
   createdAt: string;
 };
 
-async function database() {
+export async function database() {
   const injected = (globalThis as typeof globalThis & { __INTENTCART_DB__?: Database }).__INTENTCART_DB__;
   if (injected) return injected;
   const { env } = await import("cloudflare:workers");
@@ -66,7 +67,7 @@ function eventStatement(db: Database, sessionId: string, sequence: number, event
 
 function rowToSession(row: Record<string, unknown>): StoredSession {
   return {
-    id: String(row.id), intent: String(row.intent), title: String(row.title), mode: String(row.mode),
+    id: String(row.id), storeId: row.store_id ? String(row.store_id) : null, intent: String(row.intent), title: String(row.title), mode: String(row.mode),
     status: String(row.status) as SessionStatus, budget: Number(row.budget), total: Number(row.total),
     currency: String(row.currency), cartVersion: String(row.cart_version), fitScore: Number(row.fit_score) / 100,
     cart: JSON.parse(String(row.cart_json)), policy: JSON.parse(String(row.policy_json)),
@@ -79,9 +80,9 @@ export async function createSession(session: StoredSession, events: AuditEventIn
   const db = await database();
   const statements = [
     db.prepare(`INSERT INTO shopping_sessions
-      (id, intent, title, mode, status, budget, total, currency, cart_version, fit_score, cart_json, policy_json, created_at, updated_at, approved_at, order_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
-      session.id, session.intent, session.title, session.mode, session.status, session.budget, session.total,
+      (id, store_id, intent, title, mode, status, budget, total, currency, cart_version, fit_score, cart_json, policy_json, created_at, updated_at, approved_at, order_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+      session.id, session.storeId ?? null, session.intent, session.title, session.mode, session.status, session.budget, session.total,
       session.currency, session.cartVersion, Math.round(session.fitScore * 100), JSON.stringify(session.cart),
       JSON.stringify(session.policy), session.createdAt, session.updatedAt, session.approvedAt, session.orderId,
     ),
@@ -90,8 +91,8 @@ export async function createSession(session: StoredSession, events: AuditEventIn
   await db.batch(statements);
 }
 
-export async function getSession(id: string) {
-  const row = await (await database()).prepare("SELECT * FROM shopping_sessions WHERE id = ?").bind(id).first();
+export async function getSession(id: string, storeId: string) {
+  const row = await (await database()).prepare("SELECT * FROM shopping_sessions WHERE id = ? AND store_id = ?").bind(id, storeId).first();
   return row ? rowToSession(row) : null;
 }
 
@@ -99,10 +100,10 @@ export async function updateSession(session: StoredSession, events: AuditEventIn
   const db = await database();
   const results = await db.batch([
     db.prepare(`UPDATE shopping_sessions SET title = ?, mode = ?, status = ?, budget = ?, total = ?, currency = ?, cart_version = ?,
-      fit_score = ?, cart_json = ?, policy_json = ?, updated_at = ?, approved_at = ?, order_id = ? WHERE id = ? AND cart_version = ? AND status IN ('ready', 'blocked')`).bind(
+      fit_score = ?, cart_json = ?, policy_json = ?, updated_at = ?, approved_at = ?, order_id = ? WHERE id = ? AND cart_version = ? AND status IN ('ready', 'blocked') AND store_id IS ?`).bind(
       session.title, session.mode, session.status, session.budget, session.total, session.currency, session.cartVersion,
       Math.round(session.fitScore * 100), JSON.stringify(session.cart), JSON.stringify(session.policy), session.updatedAt,
-      session.approvedAt, session.orderId, session.id, expectedVersion,
+      session.approvedAt, session.orderId, session.id, expectedVersion, session.storeId ?? null,
     ),
     ...events.map((event) => conditionalEvent(db, session, event, "cart_version = ?", session.cartVersion)),
   ]);
@@ -139,8 +140,8 @@ export async function claimCheckout(session: StoredSession, idempotencyKey: stri
   const now = new Date().toISOString();
   const next = { ...session, status: "approved" as const, approvedAt: now, updatedAt: now, policy: { ...session.policy, checkoutAttempt: attempt } };
   const result = await db.batch([
-    db.prepare("UPDATE shopping_sessions SET status = 'approved', approved_at = ?, updated_at = ?, policy_json = ? WHERE id = ? AND cart_version = ? AND status = 'ready'")
-      .bind(now, now, JSON.stringify(next.policy), session.id, session.cartVersion),
+    db.prepare("UPDATE shopping_sessions SET status = 'approved', approved_at = ?, updated_at = ?, policy_json = ? WHERE id = ? AND cart_version = ? AND status = 'ready' AND store_id IS ? AND (store_id IS NULL OR EXISTS (SELECT 1 FROM stores WHERE stores.id = shopping_sessions.store_id AND catalogue_version = ?))")
+      .bind(now, now, JSON.stringify(next.policy), session.id, session.cartVersion, session.storeId ?? null, session.policy.catalogueVersion ?? null),
     conditionalEvent(db, next, { type: "BUYER", state: "complete", title: "Buyer approved exact cart and amount", detail: "Checkout claimed before contacting the order provider.", metadata: { cartVersion: session.cartVersion, amount: session.total, attemptId: attempt.id, idempotencyKey } }, "json_extract(policy_json, '$.checkoutAttempt.id') = ?", attempt.id),
   ]);
   return Number((result[0] as { meta: { changes: number } }).meta.changes) === 1 ? next : null;
@@ -157,11 +158,11 @@ export async function markCheckoutUnknown(session: StoredSession, providerOrderI
   ]);
 }
 
-export async function getAuditBundle(sessionId?: string | null) {
+export async function getAuditBundle(sessionId: string | null | undefined, storeId: string) {
   const db = await database();
   const row = sessionId
-    ? await db.prepare("SELECT * FROM shopping_sessions WHERE id = ?").bind(sessionId).first()
-    : await db.prepare("SELECT * FROM shopping_sessions ORDER BY created_at DESC LIMIT 1").first();
+    ? await db.prepare("SELECT * FROM shopping_sessions WHERE id = ? AND store_id = ?").bind(sessionId, storeId).first()
+    : await db.prepare("SELECT * FROM shopping_sessions WHERE store_id = ? ORDER BY created_at DESC LIMIT 1").bind(storeId).first();
   if (!row) return null;
   const session = rowToSession(row);
   const result = await db.prepare("SELECT * FROM audit_events WHERE session_id = ? ORDER BY sequence ASC").bind(session.id).all<Record<string, unknown>>();
@@ -172,15 +173,15 @@ export async function getAuditBundle(sessionId?: string | null) {
   return { session, events };
 }
 
-export async function getMerchantSnapshot() {
+export async function getMerchantSnapshot(storeId: string) {
   const db = await database();
   const summary = await db.prepare(`SELECT COUNT(*) AS sessions,
     SUM(CASE WHEN status = 'ordered' THEN 1 ELSE 0 END) AS converted,
     SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked,
     COALESCE(SUM(CASE WHEN status = 'ordered' THEN total ELSE 0 END), 0) AS revenue,
     COALESCE(AVG(CASE WHEN status = 'ordered' THEN total END), 0) AS aov
-    FROM shopping_sessions`).first<Record<string, unknown>>();
-  const rows = await db.prepare("SELECT * FROM shopping_sessions ORDER BY created_at DESC LIMIT 8").all<Record<string, unknown>>();
+    FROM shopping_sessions WHERE store_id = ?`).bind(storeId).first<Record<string, unknown>>();
+  const rows = await db.prepare("SELECT * FROM shopping_sessions WHERE store_id = ? ORDER BY created_at DESC LIMIT 8").bind(storeId).all<Record<string, unknown>>();
   const sessions = rows.results.map(rowToSession);
   return {
     sessions: Number(summary?.sessions ?? 0), converted: Number(summary?.converted ?? 0), blocked: Number(summary?.blocked ?? 0),

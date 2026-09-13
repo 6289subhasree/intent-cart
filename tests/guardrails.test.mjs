@@ -3,7 +3,7 @@ import test from "node:test";
 import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 
-import { createD1 } from "./helpers/d1.mjs";
+import { createD1, authHeaders, testRequest } from "./helpers/d1.mjs";
 
 async function worker(db) {
   globalThis.__INTENTCART_DB__ = db;
@@ -20,7 +20,7 @@ test("Gemini recommendations are validated and provider failures fall back", asy
   const root = fileURLToPath(new URL("..", import.meta.url));
   const vite = await createServer({ configFile: false, root, resolve: { alias: { "@": root } }, server: { middlewareMode: true, hmr: false } });
   const route = await vite.ssrLoadModule("/app/api/agent/route.ts");
-  const run = async () => (await route.POST({ json: async () => ({ intent: "Choose a gentle cleanser under INR 2000" }) })).json();
+  const run = async () => (await route.POST(testRequest({ intent: "Choose a gentle cleanser under INR 2000" }))).json();
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.GEMINI_API_KEY;
   process.env.GEMINI_API_KEY = "test-key";
@@ -99,7 +99,7 @@ test("sensitive-skin fallback excludes products without the catalogue tag", asyn
 });
 
 async function request(app, db, path, body, method = "POST") {
-  return app.fetch(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined }), { DB: db, ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, ctx);
+  return app.fetch(new Request(`http://localhost${path}`, { method, headers: authHeaders, body: body ? JSON.stringify(body) : undefined }), { DB: db, ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, ctx);
 }
 
 async function session(app, db) {
