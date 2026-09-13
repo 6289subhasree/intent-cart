@@ -95,32 +95,65 @@ export async function getSession(id: string) {
   return row ? rowToSession(row) : null;
 }
 
-export async function updateSession(session: StoredSession, events: AuditEventInput[] = []) {
+export async function updateSession(session: StoredSession, events: AuditEventInput[] = [], expectedVersion: string) {
   const db = await database();
-  const sequenceRow = await db.prepare("SELECT COALESCE(MAX(sequence), 0) AS value FROM audit_events WHERE session_id = ?").bind(session.id).first<{ value: number }>();
-  const start = Number(sequenceRow?.value ?? 0);
-  await db.batch([
+  const results = await db.batch([
     db.prepare(`UPDATE shopping_sessions SET title = ?, mode = ?, status = ?, budget = ?, total = ?, currency = ?, cart_version = ?,
-      fit_score = ?, cart_json = ?, policy_json = ?, updated_at = ?, approved_at = ?, order_id = ? WHERE id = ?`).bind(
+      fit_score = ?, cart_json = ?, policy_json = ?, updated_at = ?, approved_at = ?, order_id = ? WHERE id = ? AND cart_version = ? AND status IN ('ready', 'blocked')`).bind(
       session.title, session.mode, session.status, session.budget, session.total, session.currency, session.cartVersion,
       Math.round(session.fitScore * 100), JSON.stringify(session.cart), JSON.stringify(session.policy), session.updatedAt,
-      session.approvedAt, session.orderId, session.id,
+      session.approvedAt, session.orderId, session.id, expectedVersion,
     ),
-    ...events.map((event, index) => eventStatement(db, session.id, start + index + 1, event, session.updatedAt)),
+    ...events.map((event) => conditionalEvent(db, session, event, "cart_version = ?", session.cartVersion)),
   ]);
+  return Number((results[0] as { meta: { changes: number } }).meta.changes) === 1;
 }
 
 export async function completeOrder(session: StoredSession, order: { id: string; sessionId: string; providerOrderId: string; amount: number; currency: string; status: string; mode: string; idempotencyKey: string; createdAt: string }, events: AuditEventInput[]) {
   const db = await database();
-  const sequenceRow = await db.prepare("SELECT COALESCE(MAX(sequence), 0) AS value FROM audit_events WHERE session_id = ?").bind(session.id).first<{ value: number }>();
-  const start = Number(sequenceRow?.value ?? 0);
   await db.batch([
     db.prepare(`INSERT INTO orders (id, session_id, provider_order_id, amount, currency, status, mode, idempotency_key, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(order.id, order.sessionId, order.providerOrderId, order.amount, order.currency, order.status, order.mode, order.idempotencyKey, order.createdAt),
     db.prepare(`UPDATE shopping_sessions SET status = ?, total = ?, policy_json = ?, updated_at = ?, approved_at = ?, order_id = ? WHERE id = ?`).bind(
       session.status, session.total, JSON.stringify(session.policy), session.updatedAt, session.approvedAt, session.orderId, session.id,
     ),
-    ...events.map((event, index) => eventStatement(db, session.id, start + index + 1, event, session.updatedAt)),
+    ...events.map((event) => conditionalEvent(db, session, event, "status = ?", "ordered")),
+  ]);
+}
+
+
+function conditionalEvent(db: Database, session: StoredSession, event: AuditEventInput, condition: string, value: string) {
+  return db.prepare(`INSERT INTO audit_events (id, session_id, sequence, type, state, title, detail, metadata_json, created_at)
+    SELECT ?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM audit_events WHERE session_id = ?), ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (SELECT 1 FROM shopping_sessions WHERE id = ? AND ${condition})`).bind(
+      crypto.randomUUID(), session.id, session.id, event.type, event.state, event.title, event.detail,
+      JSON.stringify(event.metadata ?? {}), session.updatedAt, session.id, value,
+    );
+}
+
+// The durable approval claim is acquired before any provider request. A pending
+// or uncertain claim is never automatically released or retried.
+export async function claimCheckout(session: StoredSession, idempotencyKey: string) {
+  const db = await database();
+  const attempt = { id: crypto.randomUUID(), state: "pending" as const, idempotencyKey };
+  const now = new Date().toISOString();
+  const next = { ...session, status: "approved" as const, approvedAt: now, updatedAt: now, policy: { ...session.policy, checkoutAttempt: attempt } };
+  const result = await db.batch([
+    db.prepare("UPDATE shopping_sessions SET status = 'approved', approved_at = ?, updated_at = ?, policy_json = ? WHERE id = ? AND cart_version = ? AND status = 'ready'")
+      .bind(now, now, JSON.stringify(next.policy), session.id, session.cartVersion),
+    conditionalEvent(db, next, { type: "BUYER", state: "complete", title: "Buyer approved exact cart and amount", detail: "Checkout claimed before contacting the order provider.", metadata: { cartVersion: session.cartVersion, amount: session.total, attemptId: attempt.id, idempotencyKey } }, "json_extract(policy_json, '$.checkoutAttempt.id') = ?", attempt.id),
+  ]);
+  return Number((result[0] as { meta: { changes: number } }).meta.changes) === 1 ? next : null;
+}
+
+export async function markCheckoutUnknown(session: StoredSession, providerOrderId?: string) {
+  const db = await database();
+  const attempt = session.policy.checkoutAttempt!;
+  const next = { ...session, updatedAt: new Date().toISOString(), policy: { ...session.policy, checkoutAttempt: { ...attempt, state: "unknown" as const, ...(providerOrderId ? { providerOrderId } : {}) } } };
+  await db.batch([
+    db.prepare("UPDATE shopping_sessions SET policy_json = ?, updated_at = ? WHERE id = ? AND status = 'approved' AND json_extract(policy_json, '$.checkoutAttempt.id') = ?")
+      .bind(JSON.stringify(next.policy), next.updatedAt, session.id, attempt.id),
+    conditionalEvent(db, next, { type: "MONEY", state: "failure", title: "Order outcome requires review", detail: "The provider response or local save could not be confirmed. Automatic retries and edits remain blocked.", metadata: { attemptId: attempt.id, idempotencyKey: attempt.idempotencyKey } }, "status = ?", "approved"),
   ]);
 }
 

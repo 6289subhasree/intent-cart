@@ -16,7 +16,7 @@ export function createD1() {
   database.exec(migration);
   return {
     prepare(sql) { return new D1Statement(database, sql); },
-    async batch(statements) { const results = []; database.exec("BEGIN"); try { for (const statement of statements) results.push(await statement.run()); database.exec("COMMIT"); return results; } catch (error) { database.exec("ROLLBACK"); throw error; } },
+    async batch(statements) { const results = []; database.exec("BEGIN"); try { for (const statement of statements) { const result = database.prepare(statement.sql).run(...statement.values); results.push({ meta: { changes: Number(result.changes) } }); } database.exec("COMMIT"); return results; } catch (error) { database.exec("ROLLBACK"); throw error; } },
     close() { database.close(); },
   };
 }

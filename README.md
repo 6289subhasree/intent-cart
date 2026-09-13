@@ -127,7 +127,27 @@ stateDiagram-v2
     Ordered --> Ordered: Duplicate request reuses order
 ```
 
-The inventory-conflict control in the buyer workspace exercises the same server path a real inventory notification would call. It marks the session blocked, records that no money action was attempted, replaces the unavailable serum, increments the cart version and requires approval again.
+The inventory-conflict control marks a product in the saved cart unavailable for that session. The exclusion is stored in the policy JSON and survives cart edits, repair attempts and server restarts. Repair looks for an available product in the same category that passes the request checks. If no replacement fits, the buyer must remove the item or change the request. This is a session-level failure exercise; merchant-wide stock synchronisation and authenticated inventory webhooks are still separate work.
+
+### Concurrent checkout and uncertain outcomes
+
+Cart updates compare the submitted version inside the database write. Only the winning update changes the cart and appends its audit events. Checkout similarly changes a ready session to approved in a database batch before contacting the order provider. That saved claim locks cart edits and other checkout requests. Audit sequence numbers are allocated inside the write batch.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ready
+    Ready --> Blocked: Inventory conflict
+    Blocked --> Ready: Valid edit or replacement
+    Ready --> Approved: Atomic checkout claim
+    Approved --> Ordered: Valid response saved
+    Approved --> Review: Timeout or uncertain result
+    Review --> Review: Retry rejected
+    Ordered --> Ordered: Return saved order
+```
+
+`Review` is represented by an approved session with an unknown checkout attempt in its policy JSON. A timeout, invalid provider response or failed local order save leaves the claim locked. There is no automatic claim expiry: releasing it without reconciling the provider could duplicate an order. The audit trace retains the attempt ID and idempotency key, and the policy retains a provider order ID when one was observed. A process interruption can leave a pending claim, which also stays locked. An operator reconciliation workflow is not implemented yet; do not clear these records or submit a replacement order without checking the provider.
+
+This prevents concurrent provider submissions for the same saved session. It does not deduplicate separate shopping sessions or guarantee a provider's own idempotency behavior. Provider tests use controlled responses, including timeout, mismatched amounts and a failed database save after provider success.
 
 ## Data model
 

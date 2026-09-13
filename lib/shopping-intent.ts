@@ -7,6 +7,9 @@ const categories = {
   wrap: /\b(?:gift[ -]?wrap|wrapping)\b/i,
 };
 type Category = keyof typeof categories;
+export function sameProductCategory(first: string, second: string) {
+  return Boolean(categoryById[first] && categoryById[first] === categoryById[second]);
+}
 const categoryById: Record<string, Category> = {
   sku_cleanser_01: "cleanser", sku_serum_04: "serum", sku_barrier_02: "serum", sku_spf_07: "sunscreen", sku_wrap_01: "wrap",
 };
@@ -68,6 +71,7 @@ export function eligibleProducts(intent: ReturnType<typeof parseShoppingIntent>)
 export function evaluateIntentCart(lines: CartLine[], text: string, budget: number, at = new Date(), unavailable: string[] = []) {
   const intent = parseShoppingIntent(text, at);
   const policy = evaluateCart(lines, budget, unavailable);
+  policy.unavailableProductIds = [...unavailable];
   const allowed = new Set(eligibleProducts(intent).map((product) => product.id));
   const matches = !intent.error && normalizeLines(lines).every((line) => allowed.has(line.productId));
   if (!matches) {

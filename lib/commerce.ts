@@ -15,6 +15,8 @@ export type CatalogueProduct = {
 export type CartLine = { productId: string; quantity: number };
 
 export type PolicyResult = {
+  unavailableProductIds?: string[];
+  checkoutAttempt?: { id: string; state: "pending" | "unknown" | "completed"; idempotencyKey: string; providerOrderId?: string };
   withinBudget: boolean;
   stockValid: boolean;
   deliveryValid: boolean;
