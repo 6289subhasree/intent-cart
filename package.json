@@ -13,6 +13,7 @@
     "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "evaluate": "node scripts/evaluate.mjs",
+    "typecheck": "wrangler types worker-configuration.d.ts --config wrangler.local.jsonc && tsc --noEmit",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
     "db:local": "CI=1 wrangler d1 migrations apply site-creator-d1 --local --config wrangler.local.jsonc"
   },

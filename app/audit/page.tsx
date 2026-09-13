@@ -22,7 +22,7 @@ export default function AuditPage() {
   useEffect(() => {
     const sessionId = new URLSearchParams(window.location.search).get("sessionId");
     fetch(`/api/audit${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`)
-      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; })
+      .then(async (response) => { const result = await response.json() as Bundle & { error?: string }; if (!response.ok) throw new Error(result.error); return result; })
       .then(setBundle).catch((cause) => setError(cause instanceof Error ? cause.message : "The audit trail could not be loaded."));
   }, []);
 

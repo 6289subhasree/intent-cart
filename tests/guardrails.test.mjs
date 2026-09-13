@@ -37,6 +37,11 @@ test("Gemini recommendations are validated and provider failures fall back", asy
     const fallback = await run();
     assert.equal(fallback.mode, "deterministic_fallback");
     assert.equal(fallback.degradedGracefully, true);
+    assert.deepEqual(fallback.items.map((item) => item.id), ["sku_cleanser_01"]);
+    globalThis.fetch = async () => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ cart: ["sku_serum_04"], title: "Wrong category", fitScore: 1 }) }] } }] });
+    const invalid = await run();
+    assert.equal(invalid.mode, "deterministic_fallback");
+    assert.deepEqual(invalid.items.map((item) => item.id), ["sku_cleanser_01"]);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
@@ -46,12 +51,59 @@ test("Gemini recommendations are validated and provider failures fall back", asy
   }
 });
 
+test("buyer budget and exclusions survive fallback, edits and checkout", async () => {
+  const db = createD1(); const app = await worker(db);
+  try {
+    const response = await request(app, db, "/api/agent", { intent: "I only want sunscreen. No cleanser, serum or gift wrap. Budget ₹600." });
+    assert.equal(response.status, 200);
+    const cart = await response.json();
+    assert.equal(cart.budget, 60000);
+    assert.equal(cart.total, 59900);
+    assert.deepEqual(cart.items.map((item) => item.id), ["sku_spf_07"]);
+    const changed = await request(app, db, "/api/cart", { sessionId: cart.id, cartVersion: cart.cartVersion, action: "update", items: [{ productId: "sku_cleanser_01", quantity: 1 }] });
+    const blocked = await changed.json();
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.policy.withinBudget, true);
+    assert.equal(blocked.policy.passed, false);
+    const checkout = await request(app, db, "/api/checkout", { sessionId: blocked.id, cartVersion: blocked.cartVersion, approval: true });
+    assert.equal(checkout.status, 409);
+    const emptied = await request(app, db, "/api/cart", { sessionId: blocked.id, cartVersion: blocked.cartVersion, action: "update", items: [] });
+    const empty = await emptied.json();
+    assert.equal(empty.policy.passed, false);
+    assert.equal((await request(app, db, "/api/checkout", { sessionId: empty.id, cartVersion: empty.cartVersion, approval: true })).status, 409);
+  } finally { db.close(); }
+});
+
+test("unaffordable, unsupported and impossible-delivery requests create no purchasable session", async () => {
+  const db = createD1(); const app = await worker(db);
+  try {
+    for (const intent of ["Only sunscreen under ₹100", "Cleanser and sunscreen under ₹600", "Buy running shoes under ₹2000", "Skincare for sensitive skin delivered tomorrow under ₹2000", "Only sunscreen. No sunscreen. Budget ₹2000"]) {
+      const response = await request(app, db, "/api/agent", { intent });
+      assert.equal(response.status, 422, intent);
+      assert.equal((await response.json()).id, undefined);
+    }
+    const metrics = await (await request(app, db, "/api/merchant", null, "GET")).json();
+    assert.equal(metrics.sessions, 0);
+  } finally { db.close(); }
+});
+
+test("sensitive-skin fallback excludes products without the catalogue tag", async () => {
+  const db = createD1(); const app = await worker(db);
+  try {
+    const response = await request(app, db, "/api/agent", { intent: "Skincare for sensitive skin under ₹2000" });
+    const cart = await response.json();
+    assert.equal(response.status, 200);
+    assert.ok(cart.items.every((item) => item.tags.includes("sensitive-skin")));
+    assert.ok(!cart.items.some((item) => item.id === "sku_serum_04"));
+  } finally { db.close(); }
+});
+
 async function request(app, db, path, body, method = "POST") {
   return app.fetch(new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined }), { DB: db, ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, ctx);
 }
 
 async function session(app, db) {
-  const response = await request(app, db, "/api/agent", { intent: "Build a sensitive-skin gift under ₹2,000 and deliver it before Friday." });
+  const response = await request(app, db, "/api/agent", { intent: "Build a skincare gift under ₹2,000 and deliver it within 4 days." });
   assert.equal(response.status, 200);
   return response.json();
 }

@@ -16,7 +16,7 @@ const money = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
 export default function MerchantPage() {
   const [data, setData] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { fetch("/api/merchant").then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; }).then(setData).catch((cause) => setError(cause instanceof Error ? cause.message : "Analytics could not be loaded.")); }, []);
+  useEffect(() => { fetch("/api/merchant").then(async (response) => { const result = await response.json() as Snapshot & { error?: string }; if (!response.ok) throw new Error(result.error); return result; }).then(setData).catch((cause) => setError(cause instanceof Error ? cause.message : "Analytics could not be loaded.")); }, []);
   const conversion = data?.sessions ? (data.converted / data.sessions) * 100 : 0;
   const compliance = data?.sessions ? ((data.sessions - data.blocked) / data.sessions) * 100 : 100;
   const trend = useMemo(() => {

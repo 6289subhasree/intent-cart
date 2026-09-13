@@ -181,10 +181,22 @@ Every cart is checked for:
 2. integer quantities between 1 and 3;
 3. current stock;
 4. delivery within the promised window;
-5. a total within the buyer's ₹2,000 budget; and
+5. a total within the budget parsed from the request (₹2,000 when omitted); and
 6. an exact cart version at checkout.
 
 The policy result is stored with the session and recalculated before order creation. A `passed` value from the client or model is never trusted.
+
+### Request constraints
+
+The server now reads INR budgets, supported product categories and exclusions before requesting a recommendation. Both the model output and the catalogue fallback pass through the same checks. Those checks run again on cart edits and checkout; removing every item blocks checkout.
+
+Try `Only sunscreen. No cleanser, serum or gift wrap. Budget ₹600.` The resulting cart should contain the ₹599 sunscreen. `Only sunscreen under ₹100` returns a no-match response instead of a preset bundle. Changing the request in the browser requires building a new cart before checkout.
+
+This parser is intentionally limited to the five-product catalogue. It recognises cleanser, serum, sunscreen/SPF and gift wrap, plus sensitive-skin and fragrance-free catalogue tags. Explicitly named categories restrict the selection. Budgets support rupee symbols, INR/Rs, commas, decimals and `k`. Delivery supports today, tomorrow, numeric day limits and weekdays; weekday calculations use UTC and the session creation date, and remain catalogue estimates. Other delivery formats ask for clarification. Requested quantities ask the buyer to use the cart controls. This is not yet a general natural-language constraint engine: compound requests, unsupported items mixed with supported items, and arbitrary ingredient restrictions still need stronger extraction and confirmation.
+
+If no suitable selection covers the explicitly requested categories within budget, `/api/agent` returns HTTP 422 with `NO_MATCH`; unsupported input returns `CLARIFICATION_REQUIRED`. These attempts do not yet create an audit session. Buyers can remove products after the initial selection. Merchant catalogue ingestion and persisted constraint schemas remain follow-up work.
+
+Gemini is configured on the server using `GEMINI_API_KEY` and `GEMINI_MODEL`. The example model is `gemini-3.5-flash-lite`, which was verified with the development account; model access depends on your account. Provider errors or invalid selections use the constrained fallback. The UI shows the policy result instead of presenting the model's uncalibrated fit score as a measured percentage.
 
 ## API surface
 

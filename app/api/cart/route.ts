@@ -1,8 +1,9 @@
+import { evaluateIntentCart } from "@/lib/shopping-intent";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSession, updateSession, type AuditEventInput } from "@/db/repository";
-import { displayCart, evaluateCart, repairUnavailableSerum } from "@/lib/commerce";
+import { displayCart, repairUnavailableSerum } from "@/lib/commerce";
 
 const schema = z.object({
   sessionId: z.string().min(5), cartVersion: z.string().min(5), action: z.enum(["update", "conflict", "repair"]),
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
   const events: AuditEventInput[] = [];
   const now = new Date().toISOString();
   if (parsed.data.action === "conflict") {
-    const policy = evaluateCart(lines, session.budget, ["sku_serum_04"]);
+    const policy = evaluateIntentCart(lines, session.intent, session.budget, new Date(session.createdAt), ["sku_serum_04"]);
     const next = { ...session, status: "blocked" as const, policy, total: policy.total, updatedAt: now, approvedAt: null };
     events.push({ type: "INVENTORY", state: "failure", title: "Inventory conflict detected", detail: "Bright C Serum became unavailable. Checkout was blocked before order creation.", metadata: { code: "INV-409", moneyActionAttempted: false } });
     await updateSession(next, events);
@@ -35,7 +36,7 @@ export async function POST(request: NextRequest) {
   } else {
     events.push({ type: "BUYER", state: "complete", title: "Cart quantities updated", detail: "The buyer edited the cart and policy checks ran again." });
   }
-  const policy = evaluateCart(lines, session.budget);
+  const policy = evaluateIntentCart(lines, session.intent, session.budget, new Date(session.createdAt));
   const cartVersion = `${session.id}-v${Date.now().toString(36)}`;
   const next = { ...session, status: policy.passed ? "ready" as const : "blocked" as const, cart: lines, cartVersion, policy, total: policy.total, updatedAt: now, approvedAt: null };
   await updateSession(next, events);

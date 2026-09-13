@@ -1,8 +1,8 @@
+import { evaluateIntentCart } from "@/lib/shopping-intent";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { completeOrder, getSession } from "@/db/repository";
-import { evaluateCart } from "@/lib/commerce";
 
 const schema = z.object({ sessionId: z.string().min(5), cartVersion: z.string().min(5), approval: z.literal(true) });
 
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Checkout blocked: shopping session not found." }, { status: 404 });
   if (session.cartVersion !== parsed.data.cartVersion) return NextResponse.json({ error: "Checkout blocked: the approved cart version is stale." }, { status: 409 });
   if (session.status === "ordered" && session.orderId) return NextResponse.json({ id: session.orderId, amount: session.total, currency: session.currency, status: "created", reused: true });
-  const policy = evaluateCart(session.cart, session.budget);
+  const policy = evaluateIntentCart(session.cart, session.intent, session.budget, new Date(session.createdAt));
   if (!policy.passed || session.status === "blocked" || policy.total !== session.total) return NextResponse.json({ error: `Checkout blocked: ${policy.violations[0] ?? "cart policy changed."}` }, { status: 409 });
 
   const idempotencyKey = `intentcart-${session.cartVersion}-${policy.total}`;

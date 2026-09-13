@@ -58,7 +58,7 @@ export function normalizeLines(lines: CartLine[]) {
 export function evaluateCart(lines: CartLine[], budget = DEFAULT_BUDGET, forcedUnavailable: string[] = []): PolicyResult & { total: number } {
   const normalized = normalizeLines(lines);
   const missing = normalized.filter((line) => !catalogueProduct(line.productId));
-  const quantitiesValid = missing.length === 0 && normalized.every((line) => Number.isInteger(line.quantity) && line.quantity >= 1 && line.quantity <= 3);
+  const quantitiesValid = normalized.length > 0 && lines.every((line) => Number.isInteger(line.quantity) && line.quantity >= 0) && missing.length === 0 && normalized.every((line) => Number.isInteger(line.quantity) && line.quantity >= 1 && line.quantity <= 3);
   const total = quantitiesValid
     ? normalized.reduce((sum, line) => sum + (catalogueProduct(line.productId)?.price ?? 0) * line.quantity, 0)
     : 0;
