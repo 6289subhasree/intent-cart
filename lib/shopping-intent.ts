@@ -7,7 +7,7 @@ const categories = {
   wrap: /\b(?:gift[ -]?wrap|wrapping)\b/i,
 };
 type Category = string;
-export function productCategory(product: { id: string; category?: string }) { return product.category ?? categoryById[product.id] ?? ""; }
+export function productCategory(product: { id: string; category?: string }) { return product.category ?? (Object.hasOwn(categoryById, product.id) ? categoryById[product.id] : ""); }
 export function sameProductCategory(first: string, second: string, products = catalogue) {
   const a = products.find(p => p.id === first); const b = products.find(p => p.id === second);
   return Boolean(a && b && productCategory(a) && productCategory(a) === productCategory(b));
@@ -19,7 +19,7 @@ const categoryById: Record<string, Category> = {
 // Deliberately bounded parser for this catalogue. Unsupported requests ask for
 // clarification instead of letting a model invent authoritative constraints.
 export function parseShoppingIntent(text: string, at = new Date(), products = catalogue) {
-  const patterns: Record<string, RegExp> = { ...categories };
+  const patterns: Record<string, RegExp> = Object.assign(Object.create(null), categories);
   for (const product of products) {
     const category = productCategory(product);
     if (category && !patterns[category]) {

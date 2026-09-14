@@ -88,7 +88,8 @@ export function evaluateCart(lines: CartLine[], budget = DEFAULT_BUDGET, forcedU
 export function displayCart(lines: CartLine[], reasons: Record<string, string> = defaultReasons, products = catalogue): DisplayCartItem[] {
   return normalizeLines(lines).flatMap((line) => {
     const product = catalogueProduct(line.productId, products);
-    return product ? [{ ...product, quantity: line.quantity, reason: reasons[product.id] ?? defaultReasons[product.id] }] : [];
+    const reason = Object.hasOwn(reasons, line.productId) ? reasons[line.productId] : Object.hasOwn(defaultReasons, line.productId) ? defaultReasons[line.productId] : "Selected from your store catalogue; current price and availability are checked at checkout.";
+    return product ? [{ ...product, quantity: line.quantity, reason }] : [];
   });
 }
 

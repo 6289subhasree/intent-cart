@@ -13,6 +13,10 @@ test("custom categories work through recommendation and checkout; reserved produ
   try {
     const catalogue = await vite.ssrLoadModule("/app/api/catalogue/route.ts"); const agent = await vite.ssrLoadModule("/app/api/agent/route.ts"); const checkout = await vite.ssrLoadModule("/app/api/checkout/route.ts"); const repo = await vite.ssrLoadModule("/db/repository.ts");
     const product = { id: "headphones_one", name: "Studio Headphones", detail: "Over-ear wired headphones", category: "headphones", price: 120000, stock: 3, deliveryDays: 7, tags: [], crop: "product-one", imageUrl: "https://example.com/headphones.jpg" };
+    const commerce = await vite.ssrLoadModule("/lib/commerce.ts"); const intent = await vite.ssrLoadModule("/lib/shopping-intent.ts");
+    const unusual = { ...product, id: "constructor", category: "constructor" };
+    assert.equal(typeof commerce.displayCart([{ productId: unusual.id, quantity: 1 }], {}, [unusual])[0].reason, "string");
+    assert.deepEqual(intent.parseShoppingIntent("constructor under 1500", new Date(), [unusual]).requested, ["constructor"]);
     const save = (products, version) => catalogue.PUT(testRequest({ products, version }, "/api/catalogue", "PUT"));
     assert.equal((await save([product, product], "test-version")).status, 400);
     assert.equal((await save([{ ...product, imageUrl: "javascript:alert(1)" }], "test-version")).status, 400);
