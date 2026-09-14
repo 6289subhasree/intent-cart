@@ -12,7 +12,7 @@ type Database = {
   batch: (statements: Statement[]) => Promise<unknown[]>;
 };
 
-export type SessionStatus = "ready" | "blocked" | "approved" | "ordered";
+export type SessionStatus = "ready" | "blocked" | "approved" | "ordered" | "cancelled";
 
 export type StoredSession = {
   id: string;
@@ -112,17 +112,17 @@ export async function updateSession(session: StoredSession, events: AuditEventIn
 
 export async function completeOrder(session: StoredSession, order: { id: string; sessionId: string; providerOrderId: string; amount: number; currency: string; status: string; mode: string; idempotencyKey: string; createdAt: string }, events: AuditEventInput[]) {
   const db = await database();
-  await db.batch([
+  const resolutionId = crypto.randomUUID();
+  const policy = { ...session.policy, checkoutAttempt: { ...session.policy.checkoutAttempt!, state: "completed", resolutionId } };
+  const results = await db.batch([
+    db.prepare("UPDATE shopping_sessions SET status = 'ordered', total = ?, policy_json = ?, updated_at = ?, order_id = ? WHERE id = ? AND store_id = ? AND status = 'approved' AND json_extract(policy_json, '$.checkoutAttempt.id') = ?")
+      .bind(session.total, JSON.stringify(policy), session.updatedAt, order.providerOrderId, session.id, session.storeId, session.policy.checkoutAttempt!.id),
     db.prepare(`INSERT INTO orders (id, session_id, provider_order_id, amount, currency, status, mode, idempotency_key, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(order.id, order.sessionId, order.providerOrderId, order.amount, order.currency, order.status, order.mode, order.idempotencyKey, order.createdAt),
-    db.prepare(`UPDATE shopping_sessions SET status = ?, total = ?, policy_json = ?, updated_at = ?, approved_at = ?, order_id = ? WHERE id = ?`).bind(
-      session.status, session.total, JSON.stringify(session.policy), session.updatedAt, session.approvedAt, session.orderId, session.id,
-    ),
-    ...events.map((event) => conditionalEvent(db, session, event, "status = ?", "ordered")),
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM shopping_sessions WHERE id = ? AND json_extract(policy_json, '$.checkoutAttempt.resolutionId') = ?)`).bind(order.id, order.sessionId, order.providerOrderId, order.amount, order.currency, order.status, order.mode, order.idempotencyKey, order.createdAt, session.id, resolutionId),
+    ...events.map(event => conditionalEvent(db, session, event, "json_extract(policy_json, '$.checkoutAttempt.resolutionId') = ?", resolutionId)),
   ]);
+  if (Number((results[0] as { meta: { changes: number } }).meta.changes) !== 1) throw new Error("Checkout already resolved");
 }
-
-
 function conditionalEvent(db: Database, session: StoredSession, event: AuditEventInput, condition: string, value: string) {
   return db.prepare(`INSERT INTO audit_events (id, session_id, sequence, type, state, title, detail, metadata_json, created_at)
     SELECT ?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM audit_events WHERE session_id = ?), ?, ?, ?, ?, ?, ?
@@ -134,7 +134,7 @@ function conditionalEvent(db: Database, session: StoredSession, event: AuditEven
 
 // The durable approval claim is acquired before any provider request. A pending
 // or uncertain claim is never automatically released or retried.
-export async function claimCheckout(session: StoredSession, idempotencyKey: string) {
+export async function claimCheckout(session: StoredSession, idempotencyKey: string, providerMode?: "local_test" | "external") {
   const db = await database();
   // Reserve available stock in the same transaction as the approval claim.
   // Catalogue version comparison makes competing carts and editor saves exclusive.
@@ -149,7 +149,7 @@ export async function claimCheckout(session: StoredSession, idempotencyKey: stri
   }
   if (!quantities.size || [...quantities].some(([id, quantity]) => !products.some((product) => product.id === id && product.stock >= quantity))) return null;
   const reserved = products.map((product) => ({ ...product, stock: product.stock - (quantities.get(product.id) ?? 0) }));
-  const attempt = { id: crypto.randomUUID(), state: "pending" as const, idempotencyKey };
+  const attempt = { id: crypto.randomUUID(), state: "pending" as const, idempotencyKey, providerMode };
   const now = new Date().toISOString();
   const next = { ...session, status: "approved" as const, approvedAt: now, updatedAt: now, policy: { ...session.policy, checkoutAttempt: attempt } };
   const result = await db.batch([

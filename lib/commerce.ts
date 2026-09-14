@@ -17,7 +17,7 @@ export type CartLine = { productId: string; quantity: number };
 export type PolicyResult = {
   catalogueVersion?: string;
   unavailableProductIds?: string[];
-  checkoutAttempt?: { id: string; state: "pending" | "unknown" | "completed"; idempotencyKey: string; providerOrderId?: string };
+  checkoutAttempt?: { id: string; state: "pending" | "unknown" | "completed" | "released"; idempotencyKey: string; providerOrderId?: string; providerMode?: "local_test" | "external"; resolutionId?: string };
   withinBudget: boolean;
   stockValid: boolean;
   deliveryValid: boolean;

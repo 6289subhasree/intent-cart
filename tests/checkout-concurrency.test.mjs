@@ -35,7 +35,7 @@ test("durable checkout claim prevents concurrent provider calls, edits and uncer
         if (outcome === "save-failure") {
           const batch = db.batch;
           db.batch = (statements) => {
-            if (statements[0].sql.includes("INSERT INTO orders")) throw new Error("Database unavailable after provider success");
+            if (statements.some(statement => statement.sql.includes("INSERT INTO orders"))) throw new Error("Database unavailable after provider success");
             return batch(statements);
           };
         }
