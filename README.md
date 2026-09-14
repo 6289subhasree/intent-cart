@@ -394,7 +394,7 @@ Passwords use PBKDF2-HMAC-SHA256 with a random salt and 600,000 iterations. The 
 
 Catalogue edits affect only the owner’s store. Recommendation and fallback logic receive that catalogue explicitly; they do not mutate a shared module-level list. Checkout recalculates against the current store catalogue and rejects a changed total. Its database claim also checks the catalogue version, closing the gap if a catalogue edit wins just before checkout.
 
-This release is a private owner workspace, not yet a public storefront. Staff invitations, email-based recovery, MFA, account deletion, general product import and per-store payment-provider credentials are still missing. Save your password and recovery code. The catalogue editor supports up to 200 products with custom categories, descriptions, tags and optional HTTPS image URLs. Categories use lowercase letters, digits, spaces and hyphens. Products with pending reservations cannot be deleted or recategorized. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
+This release is a private owner workspace, not yet a public storefront. Staff invitations, email-based recovery, MFA, account deletion and per-store payment-provider credentials are still missing. Save your password and recovery code. The catalogue editor supports up to 200 products with custom categories, descriptions, tags and optional HTTPS image URLs. Categories use lowercase letters, digits, spaces and hyphens. Products with pending reservations cannot be deleted or recategorized. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
 
 ## Repository map
 
@@ -470,3 +470,14 @@ After updating an existing checkout, `npm run dev` applies the new recovery-colu
 ### Managing products
 
 Open **Merchant → Catalogue**, add or remove draft products, then **Save catalogue**. Prices in the editor are rupees; the API stores integer paise. Stock means available units, excluding checkout reservations. Saving uses the loaded catalogue version so a stale editor cannot overwrite a concurrent checkout. Removal affects future carts; existing order traces retain their product IDs and approved totals. New products can use custom category names such as `headphones`; shoppers should name those categories in their request. Delivery estimates support 0–30 days and are checked against the buyer’s requested limit. This does not provide carrier delivery guarantees or unrestricted natural-language attribute extraction.
+### Importing and exporting a catalogue
+
+Use **Merchant → Catalogue → Import catalogue**. Download the CSV template or export your current draft as JSON. CSV requires `id,name,detail,category,priceRupees,stock,deliveryDays`; `tags,imageUrl,crop` are optional. CSV tags use `|`, prices use rupees with at most two decimal places, and standard quoted fields support commas and newlines. JSON uses an array of product objects with integer-paise `price`, array `tags` and explicit `category`. Files are limited to 500 KB and catalogues to 200 products.
+
+Importing first validates and previews the file. **Merge by SKU** replaces matching products while retaining others; **Replace the whole draft catalogue** removes products absent from the file. The preview shows new, matching and removed counts. **Apply preview to draft** still does not persist anything: review the editor, then click **Save catalogue**. Server-side validation, reservation protection and catalogue-version checks apply to imports too. Export includes current unsaved draft edits.
+
+### Recovery compatibility and experiment readiness
+
+External checkouts record a fingerprint of their order endpoint and provider account ID. Recovery requires the same configuration; changing to another provider account cannot produce a false non-creation result. Legacy checkouts without that identity remain locked for review. Stock release also requires a recorded reservation event, preventing old checkouts from restoring stock that was never deducted.
+
+The [A/B testing plan](docs/ab-testing-plan.md) defines the acceptance gate, first experiment, metrics and assignment requirements. Traffic splitting and analytics collection are **not active**. Validate these functional flows first, then implement assignment and instrumentation before launching an experiment.

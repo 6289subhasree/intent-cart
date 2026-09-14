@@ -19,7 +19,7 @@ export type CartLine = { productId: string; quantity: number };
 export type PolicyResult = {
   catalogueVersion?: string;
   unavailableProductIds?: string[];
-  checkoutAttempt?: { id: string; state: "pending" | "unknown" | "completed" | "released"; idempotencyKey: string; providerOrderId?: string; providerMode?: "local_test" | "external"; resolutionId?: string };
+  checkoutAttempt?: { id: string; state: "pending" | "unknown" | "completed" | "released"; idempotencyKey: string; providerOrderId?: string; providerMode?: "local_test" | "external"; providerAccount?: string; resolutionId?: string; items?: { productId: string; name: string; quantity: number; unitPrice: number }[] };
   withinBudget: boolean;
   stockValid: boolean;
   deliveryValid: boolean;

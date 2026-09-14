@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withMerchant, readJson, rateLimit, AccessError } from "@/lib/auth";
 import { getSession, completeOrder } from "@/db/repository";
 import { releaseReservation } from "@/lib/order-recovery";
+import { paymentProviderIdentity } from "@/lib/payment-identity";
 
 const schema = z.object({ sessionId: z.string().min(5) }).strict();
 const evidenceSchema = z.object({ idempotencyKey: z.string(), amount: z.number().int().positive(), currency: z.literal("INR"), terminal: z.literal(true), outcome: z.enum(["created", "cancelled", "not_created"]), orderId: z.string().min(1).optional() });
@@ -22,6 +23,7 @@ export const POST = withMerchant(async (request, merchant) => {
     return NextResponse.json({ status: "cancelled" });
   }
   const endpoint = process.env.PAYMENT_RECONCILE_API_URL;
+  if (!attempt.providerAccount || attempt.providerAccount !== paymentProviderIdentity()) throw new AccessError("The original provider account cannot be verified with this configuration. Stock remains reserved.", 503);
   if (!endpoint || !process.env.PAYMENT_KEY_ID || !process.env.PAYMENT_KEY_SECRET) throw new AccessError("Provider reconciliation is not configured. Stock remains reserved.", 503);
   if (new URL(endpoint).protocol !== "https:") throw new AccessError("Reconciliation requires an HTTPS endpoint.", 503);
   let evidence: z.infer<typeof evidenceSchema>;

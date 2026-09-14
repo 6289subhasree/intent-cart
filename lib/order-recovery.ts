@@ -4,6 +4,8 @@ import { AccessError } from "@/lib/auth";
 
 export async function releaseReservation(session: StoredSession, evidence: string) {
   const db = await database();
+  const reservation = await db.prepare("SELECT id FROM audit_events WHERE session_id = ? AND type = 'INVENTORY' AND title = 'Stock reserved for checkout' AND json_extract(metadata_json, '$.attemptId') = ?").bind(session.id, session.policy.checkoutAttempt?.id).first();
+  if (!reservation) throw new AccessError("This legacy checkout has no recorded stock reservation. Manual inventory review is required.", 409);
   const store = await db.prepare("SELECT catalogue_json, catalogue_version FROM stores WHERE id = ?").bind(session.storeId).first();
   if (!store) throw new AccessError("Store unavailable.", 409);
   const products = JSON.parse(String(store.catalogue_json)) as CatalogueProduct[];

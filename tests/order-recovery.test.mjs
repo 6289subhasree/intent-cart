@@ -9,9 +9,10 @@ test("provider reconciliation verifies evidence, isolates stores and resolves st
   const vite = await createServer({ configFile: false, root, resolve: { alias: { "@": root } }, server: { middlewareMode: true, hmr: false } });
   const db = createD1(); globalThis.__INTENTCART_DB__ = db;
   const originalFetch = globalThis.fetch;
-  const names = ["PAYMENT_RECONCILE_API_URL", "PAYMENT_KEY_ID", "PAYMENT_KEY_SECRET"];
+  const names = ["PAYMENT_ORDER_API_URL", "PAYMENT_RECONCILE_API_URL", "PAYMENT_KEY_ID", "PAYMENT_KEY_SECRET"];
   const env = Object.fromEntries(names.map(name => [name, process.env[name]]));
   try {
+    process.env.PAYMENT_ORDER_API_URL = "https://provider.example/orders"; process.env.PAYMENT_KEY_ID = "test"; process.env.PAYMENT_KEY_SECRET = "test";
     const repo = await vite.ssrLoadModule("/db/repository.ts"); const route = await vite.ssrLoadModule("/app/api/orders/reconcile/route.ts");
     const recovery = await vite.ssrLoadModule("/lib/order-recovery.ts"); const commerce = await vite.ssrLoadModule("/lib/commerce.ts");
     const stock = async () => JSON.parse((await db.prepare("SELECT catalogue_json FROM stores WHERE id = 'test-store'").first()).catalogue_json).find(p => p.id === "sku_spf_07").stock;
@@ -34,6 +35,9 @@ test("provider reconciliation verifies evidence, isolates stores and resolves st
       assert.equal((await send(a.id)).status, 502); assert.equal(await stock(), 22);
     }
     globalThis.fetch = async () => Response.json(evidence);
+    process.env.PAYMENT_KEY_ID = "different-account";
+    assert.equal((await send(a.id)).status, 503); assert.equal(await stock(), 22);
+    process.env.PAYMENT_KEY_ID = "test";
     const responses = await Promise.all([send(a.id), send(a.id)]);
     assert.ok(responses.some(r => r.status === 200));
     assert.equal(await stock(), 23); assert.equal((await send(a.id)).status, 200);

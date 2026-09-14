@@ -29,6 +29,9 @@ test("two carts compete for the last unit; retries and stale editor saves cannot
     assert.notEqual(saved.catalogue_version, "test-version");
     assert.equal((await db.prepare("SELECT COUNT(*) AS count FROM orders").first()).count, 1);
     const loser = await repo.getSession(carts[1 - winner].id, "test-store");
+    const confirmed = await repo.getSession(carts[winner].id, "test-store");
+    assert.equal(confirmed.policy.checkoutAttempt.items[0].unitPrice, 59900);
+    assert.equal(confirmed.policy.checkoutAttempt.items[0].name, "Cloudveil SPF 50");
     assert.equal(loser.status, "ready");
     assert.equal((await checkout.POST(testRequest(bodies[1 - winner]))).status, 409);
     assert.equal((await catalogue.PUT(testRequest({ version: "test-version", products }, "/api/catalogue", "PUT"))).status, 409);

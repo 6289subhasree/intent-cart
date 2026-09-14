@@ -1,4 +1,5 @@
 import type { CartLine, CatalogueProduct, PolicyResult } from "@/lib/commerce";
+import { paymentProviderIdentity } from "@/lib/payment-identity";
 
 type Statement = {
   bind: (...values: unknown[]) => Statement;
@@ -149,7 +150,8 @@ export async function claimCheckout(session: StoredSession, idempotencyKey: stri
   }
   if (!quantities.size || [...quantities].some(([id, quantity]) => !products.some((product) => product.id === id && product.stock >= quantity))) return null;
   const reserved = products.map((product) => ({ ...product, stock: product.stock - (quantities.get(product.id) ?? 0) }));
-  const attempt = { id: crypto.randomUUID(), state: "pending" as const, idempotencyKey, providerMode };
+  const items = [...quantities].map(([productId, quantity]) => { const product = products.find(p => p.id === productId)!; return { productId, quantity, name: product.name, unitPrice: product.price }; });
+  const attempt = { id: crypto.randomUUID(), state: "pending" as const, idempotencyKey, providerMode, items, providerAccount: providerMode === "external" ? paymentProviderIdentity() : undefined };
   const now = new Date().toISOString();
   const next = { ...session, status: "approved" as const, approvedAt: now, updatedAt: now, policy: { ...session.policy, checkoutAttempt: attempt } };
   const result = await db.batch([
