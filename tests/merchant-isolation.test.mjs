@@ -9,7 +9,7 @@ async function setup() {
   const vite = await createServer({ configFile: false, root, resolve: { alias: { "@": root } }, server: { middlewareMode: true, hmr: false } });
   const db = createD1(); globalThis.__INTENTCART_DB__ = db;
   const routes = {};
-  for (const path of ["auth/register", "auth/login", "auth/logout", "auth/me", "auth/password", "auth/recovery-code", "auth/reset", "catalogue", "agent", "cart", "checkout", "audit", "merchant"]) routes[path] = await vite.ssrLoadModule(`/app/api/${path}/route.ts`);
+  for (const path of ["orders", "auth/register", "auth/login", "auth/logout", "auth/me", "auth/password", "auth/recovery-code", "auth/reset", "catalogue", "agent", "cart", "checkout", "audit", "merchant"]) routes[path] = await vite.ssrLoadModule(`/app/api/${path}/route.ts`);
   const send = (path, { method = "GET", cookie = "", body, origin = "http://localhost", url = "http://localhost", headers = {} } = {}) => {
     const route = path.split("?")[0];
     return routes[route][method](new Request(`${url}/api/${path}`, { method, headers: { "Content-Type": "application/json", origin, cookie, ...headers }, ...(method !== "GET" ? { body: JSON.stringify(body ?? {}) } : {}) }));
@@ -55,6 +55,10 @@ test("two merchants have separate catalogues, sessions, orders and audit exports
     assert.equal((await app.send("checkout", { method: "POST", cookie: alice, body: { sessionId: cheap.id, cartVersion: cheap.cartVersion, approval: true } })).status, 200);
     const aMetrics = await (await app.send("merchant", { cookie: alice })).json();
     const bMetrics = await (await app.send("merchant", { cookie: bob })).json();
+    assert.equal((await (await app.send("orders", { cookie: alice })).json()).orders.length, 1);
+    assert.equal((await (await app.send("orders", { cookie: bob })).json()).orders.length, 0);
+    assert.equal((await app.send(`orders?sessionId=${cheap.id}`, { cookie: bob })).status, 404);
+    assert.equal((await app.send(`orders?sessionId=${cheap.id}`, { cookie: alice })).status, 200);
     assert.equal(aMetrics.converted, 1); assert.equal(aMetrics.revenue, 49900); assert.equal(bMetrics.sessions, 0); assert.equal(bMetrics.revenue, 0);
     assert.equal((await (await app.send("audit", { cookie: alice })).json()).session.id, cheap.id);
     // Legacy sessions are preserved but never assigned to the first registrant.
