@@ -2,6 +2,8 @@ export const CATALOGUE_VERSION = "nova-2026-09-12";
 export const DEFAULT_BUDGET = 200_000;
 
 export type CatalogueProduct = {
+  category?: string;
+  imageUrl?: string;
   id: string;
   name: string;
   detail: string;
@@ -69,7 +71,10 @@ export function evaluateCart(lines: CartLine[], budget = DEFAULT_BUDGET, forcedU
     const product = catalogueProduct(line.productId, products);
     return Boolean(product && product.stock >= line.quantity && !forcedUnavailable.includes(line.productId));
   });
-  const deliveryValid = quantitiesValid && normalized.every((line) => (catalogueProduct(line.productId, products)?.deliveryDays ?? 99) <= 4);
+  const deliveryValid = quantitiesValid && normalized.every((line) => {
+    const days = catalogueProduct(line.productId, products)?.deliveryDays;
+    return days !== undefined && Number.isInteger(days) && days >= 0 && days <= 30;
+  });
   const withinBudget = quantitiesValid && total <= budget;
   const violations = [
     ...(!quantitiesValid ? ["Cart contains an unknown product or invalid quantity."] : []),

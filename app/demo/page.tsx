@@ -17,6 +17,7 @@ import { AccountMenu, useMerchantAccount } from "@/components/merchant-account";
 import type { CatalogueProduct } from "@/lib/commerce";
 
 type Product = {
+  imageUrl?: string;
   id: string; name: string; detail: string; price: number; crop: string; reason: string; quantity: number; deliveryDays?: number;
 };
 
@@ -49,7 +50,7 @@ export default function DemoPage() {
   const [error, setError] = useState<string | null>(null);
 
   const total = session?.total ?? products.reduce((sum, product) => sum + product.price * product.quantity, 0);
-  const draftConstraints = parseShoppingIntent(request);
+  const draftConstraints = parseShoppingIntent(request, new Date(), storeCatalogue);
   const budget = session?.budget ?? (draftConstraints.budget > 0 ? draftConstraints.budget : 200_000);
   const remaining = budget - total;
   const draftChanged = Boolean(session && request.trim() !== session.intent.trim());
@@ -63,7 +64,7 @@ export default function DemoPage() {
     /\b(?:no|without|exclude|skip|avoid|don't|do not)\b[^.!?;]*\b(?:gift[ -]?wrap|wrapping)\b/i.test(text)
     || /\bonly\b/i.test(text);
   const showGiftWrap = !draftChanged && !excludesWrap(request) && !excludesWrap(session?.intent ?? request)
-    && eligibleProducts(parseShoppingIntent(session?.intent ?? request), storeCatalogue).some((product) => product.id === "sku_wrap_01")
+    && eligibleProducts(parseShoppingIntent(session?.intent ?? request, new Date(), storeCatalogue), storeCatalogue).some((product) => product.id === "sku_wrap_01")
     && /\bgift\b/i.test(session?.intent ?? request)
     && !products.some((product) => product.id === "sku_wrap_01" && product.quantity > 0)
     && remaining >= (storeCatalogue.find((product) => product.id === "sku_wrap_01")?.price ?? Infinity);
@@ -179,7 +180,7 @@ export default function DemoPage() {
             <div className="reason-strip"><span><ShieldCheck /> Catalogue products</span><span><PackageCheck />{deliveryEstimate}</span><span><WalletCards />{session ? session.policy.withinBudget ? "Within budget" : "Over budget" : "Budget check pending"}</span></div>
             {inventoryFailure && <div className="failure-banner" role="alert"><TriangleAlert /><span><strong>Inventory changed before checkout</strong>{unavailableNames.join(", ")} unavailable. Remove the affected item or try a replacement.</span><Button size="sm" disabled={busyAction !== null} onClick={() => void changeCart("repair")}><RefreshCw />{busyAction === "repair" ? "Repairing…" : "Repair cart"}</Button></div>}
             {repaired && !inventoryFailure && <div className="repair-banner" role="status"><CheckCircle2 /><span><strong>Cart repaired and revalidated</strong>The replacement selection was checked against your request and budget. Review it before approval.</span></div>}
-            <div className="product-list">{products.filter((product) => product.quantity > 0).map((product) => <article className="product-row" key={product.id}><div className={`product-image ${product.crop}`} role="img" aria-label={`${product.name} product photo`} /><div className="product-copy"><div className="product-title"><div><h3>{product.name}</h3><p>{product.detail}</p></div><strong>{money(product.price)}</strong></div><div className="agent-reason"><Sparkles size={13} /><span>{product.reason}</span></div></div><div className="quantity-control" aria-label={`Quantity of ${product.name}`}><button disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={() => updateQuantity(product.id, -1)} aria-label={`Remove one ${product.name}`}>{product.quantity === 1 ? <Trash2 /> : <Minus />}</button><span>{product.quantity}</span><button disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={() => updateQuantity(product.id, 1)} aria-label={`Add one ${product.name}`}><Plus /></button></div></article>)}</div>
+            <div className="product-list">{products.filter((product) => product.quantity > 0).map((product) => <article className="product-row" key={product.id}>{product.imageUrl ? <img className="product-image" src={product.imageUrl} alt={product.name} referrerPolicy="no-referrer" style={{ objectFit: "cover" }}/> : <div className={`product-image ${product.crop}`} role="img" aria-label={`${product.name} placeholder image`} />}<div className="product-copy"><div className="product-title"><div><h3>{product.name}</h3><p>{product.detail}</p></div><strong>{money(product.price)}</strong></div><div className="agent-reason"><Sparkles size={13} /><span>{product.reason}</span></div></div><div className="quantity-control" aria-label={`Quantity of ${product.name}`}><button disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={() => updateQuantity(product.id, -1)} aria-label={`Remove one ${product.name}`}>{product.quantity === 1 ? <Trash2 /> : <Minus />}</button><span>{product.quantity}</span><button disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={() => updateQuantity(product.id, 1)} aria-label={`Add one ${product.name}`}><Plus /></button></div></article>)}</div>
             {showGiftWrap && <div className="upsell-card"><div className="upsell-icon"><Tag /></div><div><Badge variant="outline">Bounded upsell</Badge><h3>Add reusable gift wrap for {money(storeCatalogue.find((product) => product.id === "sku_wrap_01")?.price ?? 0)}?</h3><p>The server checks the new total before it changes your saved cart.</p></div><Button variant="outline" size="sm" disabled={checkoutLocked || draftChanged || !session || busyAction !== null} onClick={addGiftWrap}>Add</Button></div>}
           </>}
         </section>

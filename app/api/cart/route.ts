@@ -18,7 +18,7 @@ export const POST = withMerchant(async (request, merchant) => {
   const session = await getSession(parsed.data.sessionId, merchant.storeId);
   if (!session) return NextResponse.json({ error: "Shopping session not found." }, { status: 404 });
   if (session.cartVersion !== parsed.data.cartVersion) return NextResponse.json({ error: "This cart changed. Reload the latest version.", code: "STALE_CART" }, { status: 409 });
-  if (session.status === "ordered" || session.status === "approved") return NextResponse.json({ error: "Checkout has already started. This cart is locked.", code: "CHECKOUT_LOCKED" }, { status: 409 });
+  if (session.status === "ordered" || session.status === "approved" || session.status === "cancelled") return NextResponse.json({ error: "Checkout has already started. This cart is locked.", code: "CHECKOUT_LOCKED" }, { status: 409 });
   let lines = normalizeLines(parsed.data.action === "update" ? parsed.data.items ?? session.cart : session.cart);
   const unavailable = [...(session.policy.unavailableProductIds ?? [])];
   const events: AuditEventInput[] = [];
@@ -29,13 +29,13 @@ export const POST = withMerchant(async (request, merchant) => {
     events.push({ type: "INVENTORY", state: "failure", title: "Inventory conflict detected", detail: `${catalogueProduct(id, catalogue)?.name ?? id} is unavailable for this session.`, metadata: { productId: id, moneyActionAttempted: false } });
   } else if (parsed.data.action === "repair") {
     if (!lines.some((line) => unavailable.includes(line.productId))) return NextResponse.json({ error: "There is no active inventory conflict to repair." }, { status: 409 });
-    const candidates = eligibleProducts(parseShoppingIntent(session.intent, new Date(session.createdAt)), catalogue).filter((product) => !unavailable.includes(product.id));
+    const candidates = eligibleProducts(parseShoppingIntent(session.intent, new Date(session.createdAt), catalogue), catalogue).filter((product) => !unavailable.includes(product.id));
     for (const line of [...lines]) {
       if (!unavailable.includes(line.productId)) continue;
       const replacement = candidates.find((product) => {
         const proposed = normalizeLines(lines.map((item) => item.productId === line.productId ? { ...item, productId: product.id } : item));
         const policy = evaluateIntentCart(proposed, session.intent, session.budget, new Date(session.createdAt), [], catalogue);
-        return sameProductCategory(product.id, line.productId) && policy.passed;
+        return sameProductCategory(product.id, line.productId, catalogue) && policy.passed;
       });
       if (!replacement) return NextResponse.json({ error: "No suitable replacement is available. Remove the unavailable item or build a different cart.", code: "NO_REPLACEMENT" }, { status: 409 });
       lines = normalizeLines(lines.map((item) => item.productId === line.productId ? { ...item, productId: replacement.id } : item));

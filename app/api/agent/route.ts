@@ -50,7 +50,7 @@ async function recommend(intent: string, constraints: ReturnType<typeof parseSho
     const parsed = recommendationSchema.parse(JSON.parse(text.replace(/^```json|```$/g, "").trim()));
     const knownIds = new Set(catalogue.map((product) => product.id));
     if (parsed.cart.some((id) => !knownIds.has(id))) throw new Error("unknown product");
-    if (!coversRequestedCategories(parsed.cart, constraints)) throw new Error("requested category missing");
+    if (!coversRequestedCategories(parsed.cart, constraints, catalogue)) throw new Error("requested category missing");
     if (!evaluateIntentCart(parsed.cart.map((productId) => ({ productId, quantity: 1 })), intent, constraints.budget, createdAt, [], catalogue).passed) throw new Error("policy violation");
     return { recommendation: parsed, mode: "ai" as const };
   } catch {
@@ -65,7 +65,7 @@ export const POST = withMerchant(async (request, merchant) => {
   const parsed = requestSchema.safeParse(await readJson(request));
   if (!parsed.success) return NextResponse.json({ error: "A valid shopping intent is required." }, { status: 400 });
   const at = new Date();
-  const constraints = parseShoppingIntent(parsed.data.intent, at);
+  const constraints = parseShoppingIntent(parsed.data.intent, at, catalogue);
   if (constraints.error) return NextResponse.json({ error: constraints.error, code: "CLARIFICATION_REQUIRED" }, { status: 422 });
   const result = await recommend(parsed.data.intent, constraints, at, catalogue);
   if (!result.recommendation.cart.length) return NextResponse.json({

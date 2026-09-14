@@ -6,9 +6,11 @@ const categories = {
   sunscreen: /\b(?:sunscreens?|spf)\b/i,
   wrap: /\b(?:gift[ -]?wrap|wrapping)\b/i,
 };
-type Category = keyof typeof categories;
-export function sameProductCategory(first: string, second: string) {
-  return Boolean(categoryById[first] && categoryById[first] === categoryById[second]);
+type Category = string;
+export function productCategory(product: { id: string; category?: string }) { return product.category ?? categoryById[product.id] ?? ""; }
+export function sameProductCategory(first: string, second: string, products = catalogue) {
+  const a = products.find(p => p.id === first); const b = products.find(p => p.id === second);
+  return Boolean(a && b && productCategory(a) && productCategory(a) === productCategory(b));
 }
 const categoryById: Record<string, Category> = {
   sku_cleanser_01: "cleanser", sku_serum_04: "serum", sku_barrier_02: "serum", sku_spf_07: "sunscreen", sku_wrap_01: "wrap",
@@ -16,7 +18,15 @@ const categoryById: Record<string, Category> = {
 
 // Deliberately bounded parser for this catalogue. Unsupported requests ask for
 // clarification instead of letting a model invent authoritative constraints.
-export function parseShoppingIntent(text: string, at = new Date()) {
+export function parseShoppingIntent(text: string, at = new Date(), products = catalogue) {
+  const patterns: Record<string, RegExp> = { ...categories };
+  for (const product of products) {
+    const category = productCategory(product);
+    if (category && !patterns[category]) {
+      const escaped = category.replace(/[^a-z0-9 -]/gi, "");
+      patterns[category] = new RegExp("\\b" + escaped + "s?\\b", "i");
+    }
+  }
   const amount = text.match(/(?:₹|\bINR\s*|\bRs\.?\s*|\b(?:budget|under|below|at most|up to)\s*(?:of\s*)?)(\d[\d,]*(?:\.\d{1,2})?)\s*(k\b)?/i);
   const budget = amount ? Math.round(Number(amount[1].replaceAll(",", "")) * (amount[2] ? 1000 : 1) * 100) : DEFAULT_BUDGET;
   const excluded = new Set<Category>();
@@ -24,11 +34,11 @@ export function parseShoppingIntent(text: string, at = new Date()) {
   for (const clause of text.split(/[.!?;]|\bbut\b/i)) {
     const negation = clause.search(/\b(?:no|without|exclude|excluding|skip|avoid|don't want|do not want)\b/i);
     positive.push(negation < 0 ? clause : clause.slice(0, negation));
-    if (negation >= 0) for (const [category, pattern] of Object.entries(categories)) {
+    if (negation >= 0) for (const [category, pattern] of Object.entries(patterns)) {
       if (pattern.test(clause.slice(negation))) excluded.add(category as Category);
     }
   }
-  const requested = (Object.keys(categories) as Category[]).filter((category) => categories[category].test(positive.join(" ")));
+  const requested = (Object.keys(patterns) as Category[]).filter((category) => patterns[category].test(positive.join(" ")));
   const sensitive = /\bsensitive[ -]skin\b|\bskin is sensitive\b/i.test(text);
   const fragranceFree = /\b(?:fragrance[ -]free|no fragrance|without fragrance)\b/i.test(text);
   let deliveryDays: number | null = null;
@@ -47,19 +57,21 @@ export function parseShoppingIntent(text: string, at = new Date()) {
     ? "Please specify a budget between ₹0.01 and ₹10,00,000."
     : /[$€£]|\b(?:USD|EUR|GBP)\b/i.test(text)
       ? "This catalogue uses INR. Please specify your budget in rupees."
-      : !supported ? "This catalogue has cleansers, serums, sunscreen and gift wrap. Please name the products you want."
+      : !supported ? `Please name a product category from this catalogue: ${[...new Set(products.map(productCategory))].filter(Boolean).join(", ") || "no products available"}.`
         : /\b(?:\d+|two|three|four|five)\s+(?:bottles?\s+of\s+)?(?:cleansers?|serums?|sunscreens?|gift wraps?)\b/i.test(text)
           ? "Build a product selection first, then set the quantities with the cart controls (up to 3 per product)."
           : /\b(?:deliver|delivered|delivery|arrive|arrives)\b/i.test(text) && deliveryDays === null
             ? "Please give delivery as within a number of days, today, tomorrow, or by a weekday."
             : null;
-  return { budget, budgetSpecified: Boolean(amount), requested, excluded: [...excluded], sensitive, fragranceFree, deliveryDays, error };
+  const skincare = /\b(?:skincare|skin care|skin-care|beauty|routine|ritual)\b/i.test(text) || sensitive;
+  return { budget, budgetSpecified: Boolean(amount), requested, excluded: [...excluded], sensitive, fragranceFree, deliveryDays, error, skincare };
 }
 
 export function eligibleProducts(intent: ReturnType<typeof parseShoppingIntent>, products = catalogue) {
   return products.filter((product) => {
-    const category = categoryById[product.id];
+    const category = productCategory(product);
     return !intent.excluded.includes(category)
+      && (intent.requested.length > 0 || !intent.skincare || ["cleanser", "serum", "sunscreen", "wrap"].includes(category))
       && (!intent.requested.length || intent.requested.includes(category))
       && (!(intent.sensitive || intent.fragranceFree) || category === "wrap" || product.tags.includes(intent.sensitive ? "sensitive-skin" : "fragrance-free"))
       && (!intent.fragranceFree || category === "wrap" || product.tags.includes("fragrance-free"))
@@ -69,7 +81,7 @@ export function eligibleProducts(intent: ReturnType<typeof parseShoppingIntent>,
 }
 
 export function evaluateIntentCart(lines: CartLine[], text: string, budget: number, at = new Date(), unavailable: string[] = [], products = catalogue) {
-  const intent = parseShoppingIntent(text, at);
+  const intent = parseShoppingIntent(text, at, products);
   const policy = evaluateCart(lines, budget, unavailable, products);
   policy.unavailableProductIds = [...unavailable];
   const allowed = new Set(eligibleProducts(intent, products).map((product) => product.id));
@@ -85,7 +97,7 @@ export function fallbackRecommendation(intent: ReturnType<typeof parseShoppingIn
   let remaining = intent.budget;
   const chosen = new Set<Category>();
   const products = eligibleProducts(intent, source).filter((product) => {
-    const category = categoryById[product.id];
+    const category = productCategory(product);
     if (chosen.has(category) || (category === "wrap" && !intent.requested.includes("wrap")) || product.price > remaining) return false;
     chosen.add(category);
     remaining -= product.price;
@@ -98,6 +110,6 @@ export function fallbackRecommendation(intent: ReturnType<typeof parseShoppingIn
   };
 }
 
-export function coversRequestedCategories(ids: string[], intent: ReturnType<typeof parseShoppingIntent>) {
-  return intent.requested.every((category) => ids.some((id) => categoryById[id] === category));
+export function coversRequestedCategories(ids: string[], intent: ReturnType<typeof parseShoppingIntent>, products = catalogue) {
+  return intent.requested.every((category) => ids.some((id) => products.some(p => p.id === id && productCategory(p) === category)));
 }

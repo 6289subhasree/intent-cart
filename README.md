@@ -223,7 +223,7 @@ The server now reads INR budgets, supported product categories and exclusions be
 
 Try `Only sunscreen. No cleanser, serum or gift wrap. Budget ₹600.` The resulting cart should contain the ₹599 sunscreen. `Only sunscreen under ₹100` returns a no-match response instead of a preset bundle. Changing the request in the browser requires building a new cart before checkout.
 
-This parser is intentionally limited to the five-product catalogue. It recognises cleanser, serum, sunscreen/SPF and gift wrap, plus sensitive-skin and fragrance-free catalogue tags. Explicitly named categories restrict the selection. Budgets support rupee symbols, INR/Rs, commas, decimals and `k`. Delivery supports today, tomorrow, numeric day limits and weekdays; weekday calculations use UTC and the session creation date, and remain catalogue estimates. Other delivery formats ask for clarification. Requested quantities ask the buyer to use the cart controls. This is not yet a general natural-language constraint engine: compound requests, unsupported items mixed with supported items, and arbitrary ingredient restrictions still need stronger extraction and confirmation.
+The parser reads merchant-defined categories as request keywords and retains aliases for cleanser, serum, sunscreen/SPF and gift wrap. Sensitive-skin and fragrance-free checks use catalogue tags. Explicitly named categories restrict the selection. Budgets support rupee symbols, INR/Rs, commas, decimals and `k`. Delivery supports today, tomorrow, numeric day limits and weekdays; weekday calculations use UTC and the session creation date, and remain catalogue estimates. Other delivery formats ask for clarification. Requested quantities ask the buyer to use the cart controls. This is not yet a general natural-language constraint engine: compound requests, unsupported items mixed with supported items, and arbitrary ingredient restrictions still need stronger extraction and confirmation.
 
 If no suitable selection covers the explicitly requested categories within budget, `/api/agent` returns HTTP 422 with `NO_MATCH`; unsupported input returns `CLARIFICATION_REQUIRED`. These attempts do not yet create an audit session. Buyers can remove products after the initial selection. Merchant catalogue ingestion and persisted constraint schemas remain follow-up work.
 
@@ -394,7 +394,7 @@ Passwords use PBKDF2-HMAC-SHA256 with a random salt and 600,000 iterations. The 
 
 Catalogue edits affect only the owner’s store. Recommendation and fallback logic receive that catalogue explicitly; they do not mutate a shared module-level list. Checkout recalculates against the current store catalogue and rejects a changed total. Its database claim also checks the catalogue version, closing the gap if a catalogue edit wins just before checkout.
 
-This release is a private owner workspace, not yet a public storefront. Staff invitations, email-based recovery, MFA, account deletion, general product import and per-store payment-provider credentials are still missing. Save your password and recovery code. The catalogue editor manages the existing five product categories; renaming a product does not change its category. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
+This release is a private owner workspace, not yet a public storefront. Staff invitations, email-based recovery, MFA, account deletion, general product import and per-store payment-provider credentials are still missing. Save your password and recovery code. The catalogue editor supports up to 200 products with custom categories, descriptions, tags and optional HTTPS image URLs. Categories use lowercase letters, digits, spaces and hyphens. Products with pending reservations cannot be deleted or recategorized. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
 
 ## Repository map
 
@@ -436,7 +436,7 @@ worker/index.ts              Cloudflare Worker entry point
 
 ## Next useful additions
 
-- Merchant-managed catalogue ingestion instead of the bundled five-product catalogue.
+- Catalogue synchronization with ecommerce platforms.
 - Webhook-driven inventory updates.
 - Staff roles, email-based recovery, MFA and public shopper access with session ownership.
 - Expiring approval tokens for long-running carts.
@@ -467,3 +467,6 @@ flowchart TD
 ```
 
 After updating an existing checkout, `npm run dev` applies the new recovery-column migration automatically. It preserves accounts and store records; existing accounts initially have no recovery code.
+### Managing products
+
+Open **Merchant → Catalogue**, add or remove draft products, then **Save catalogue**. Prices in the editor are rupees; the API stores integer paise. Stock means available units, excluding checkout reservations. Saving uses the loaded catalogue version so a stale editor cannot overwrite a concurrent checkout. Removal affects future carts; existing order traces retain their product IDs and approved totals. New products can use custom category names such as `headphones`; shoppers should name those categories in their request. Delivery estimates support 0–30 days and are checked against the buyer’s requested limit. This does not provide carrier delivery guarantees or unrestricted natural-language attribute extraction.
