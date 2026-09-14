@@ -118,6 +118,12 @@ The checkout request deliberately does not contain an amount. It contains only t
 
 ## Inventory failure and recovery
 
+Checkout reserves stock before contacting the order provider. The database updates the approval claim and the store’s available quantities in one transaction, guarded by the catalogue version. Two carts competing for the last unit cannot both reserve it. A stale catalogue-editor save is rejected rather than restoring stock from an old screen.
+
+The catalogue editor’s **Available units** field excludes checkout reservations. Successful orders keep that deduction; repeated checkout requests do not deduct again. If the provider times out or the local order save fails, stock remains reserved while the order is locked for review. Reservations do not expire automatically: releasing stock without confirming the provider’s outcome could allow an item to be sold twice. Cancellation, provider reconciliation and a dedicated reservation-release workflow are still pending. Existing orders created before this update are not deducted retroactively.
+
+Each reservation appears in the audit trail as **Stock reserved for checkout**. Tests cover competing carts, retry safety, stale editor saves, transaction rollback, and stock retention after uncertain outcomes.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Ready: Recommendation saved

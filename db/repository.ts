@@ -1,4 +1,4 @@
-import type { CartLine, PolicyResult } from "@/lib/commerce";
+import type { CartLine, CatalogueProduct, PolicyResult } from "@/lib/commerce";
 
 type Statement = {
   bind: (...values: unknown[]) => Statement;
@@ -136,13 +136,29 @@ function conditionalEvent(db: Database, session: StoredSession, event: AuditEven
 // or uncertain claim is never automatically released or retried.
 export async function claimCheckout(session: StoredSession, idempotencyKey: string) {
   const db = await database();
+  // Reserve available stock in the same transaction as the approval claim.
+  // Catalogue version comparison makes competing carts and editor saves exclusive.
+  if (!session.storeId) return null;
+  const store = await db.prepare("SELECT catalogue_json, catalogue_version FROM stores WHERE id = ?").bind(session.storeId).first();
+  if (!store || store.catalogue_version !== session.policy.catalogueVersion) return null;
+  const products = JSON.parse(String(store.catalogue_json)) as CatalogueProduct[];
+  const quantities = new Map<string, number>();
+  for (const line of session.cart) {
+    if (!Number.isInteger(line.quantity) || line.quantity < 1) return null;
+    quantities.set(line.productId, (quantities.get(line.productId) ?? 0) + line.quantity);
+  }
+  if (!quantities.size || [...quantities].some(([id, quantity]) => !products.some((product) => product.id === id && product.stock >= quantity))) return null;
+  const reserved = products.map((product) => ({ ...product, stock: product.stock - (quantities.get(product.id) ?? 0) }));
   const attempt = { id: crypto.randomUUID(), state: "pending" as const, idempotencyKey };
   const now = new Date().toISOString();
   const next = { ...session, status: "approved" as const, approvedAt: now, updatedAt: now, policy: { ...session.policy, checkoutAttempt: attempt } };
   const result = await db.batch([
     db.prepare("UPDATE shopping_sessions SET status = 'approved', approved_at = ?, updated_at = ?, policy_json = ? WHERE id = ? AND cart_version = ? AND status = 'ready' AND store_id IS ? AND (store_id IS NULL OR EXISTS (SELECT 1 FROM stores WHERE stores.id = shopping_sessions.store_id AND catalogue_version = ?))")
       .bind(now, now, JSON.stringify(next.policy), session.id, session.cartVersion, session.storeId ?? null, session.policy.catalogueVersion ?? null),
+    db.prepare("UPDATE stores SET catalogue_json = ?, catalogue_version = ? WHERE id = ? AND EXISTS (SELECT 1 FROM shopping_sessions WHERE id = ? AND status = 'approved' AND json_extract(policy_json, '$.checkoutAttempt.id') = ?)")
+      .bind(JSON.stringify(reserved), crypto.randomUUID(), session.storeId, session.id, attempt.id),
     conditionalEvent(db, next, { type: "BUYER", state: "complete", title: "Buyer approved exact cart and amount", detail: "Checkout claimed before contacting the order provider.", metadata: { cartVersion: session.cartVersion, amount: session.total, attemptId: attempt.id, idempotencyKey } }, "json_extract(policy_json, '$.checkoutAttempt.id') = ?", attempt.id),
+    conditionalEvent(db, next, { type: "INVENTORY", state: "complete", title: "Stock reserved for checkout", detail: "Available stock reduced atomically with approval. Unconfirmed orders keep their reservation until reviewed.", metadata: { items: session.cart, attemptId: attempt.id } }, "json_extract(policy_json, '$.checkoutAttempt.id') = ?", attempt.id),
   ]);
   return Number((result[0] as { meta: { changes: number } }).meta.changes) === 1 ? next : null;
 }

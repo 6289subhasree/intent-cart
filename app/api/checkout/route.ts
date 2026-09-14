@@ -25,7 +25,7 @@ export const POST = withMerchant(async (request, merchant) => {
   const keySecret = process.env.PAYMENT_KEY_SECRET;
   if ([apiUrl, keyId, keySecret].some(Boolean) && ![apiUrl, keyId, keySecret].every(Boolean)) return NextResponse.json({ error: "Order provider configuration is incomplete." }, { status: 503 });
   const claimed = await claimCheckout({ ...session, policy }, idempotencyKey);
-  if (!claimed) return NextResponse.json({ error: "Another checkout or cart edit won this request. Reload the saved session.", code: "CHECKOUT_LOCKED" }, { status: 409 });
+  if (!claimed) return NextResponse.json({ error: "Stock, catalogue or cart changed during checkout. Reload and review your cart before trying again.", code: "CHECKOUT_LOCKED" }, { status: 409 });
   let observedProviderOrderId: string | undefined;
   try {
     let providerOrder: z.infer<typeof orderSchema>;

@@ -50,6 +50,8 @@ test("durable checkout claim prevents concurrent provider calls, edits and uncer
         assert.equal((await first).status, outcome === "success" ? 200 : 502);
         assert.equal((await post(checkout, body)).status, outcome === "success" ? 200 : 409);
         assert.equal(calls, 1, outcome);
+        const stock = JSON.parse((await db.prepare("SELECT catalogue_json FROM stores WHERE id = 'test-store'").first()).catalogue_json).find(p => p.id === "sku_spf_07").stock;
+        assert.equal(stock, 22, "success and uncertain outcomes reserve once, including retries");
         const trace = await repo.getAuditBundle(cart.id, "test-store");
         assert.equal(trace.events.filter((event) => event.title === "Buyer approved exact cart and amount").length, 1);
         assert.deepEqual(trace.events.map((event) => event.sequence), trace.events.map((_, index) => index + 1));
@@ -101,6 +103,7 @@ test("cart writes compare versions atomically and inventory exclusions survive u
     assert.equal(winners[1], null);
     for (const reverse of [false, true]) {
       const fresh = { ...session, id: `IC-race-${reverse}`, cartVersion: `race-${reverse}` };
+      fresh.policy = { ...session.policy, catalogueVersion: (await db.prepare("SELECT catalogue_version FROM stores WHERE id = 'test-store'").first()).catalogue_version };
       await repo.createSession(fresh, []);
       const edit = () => repo.updateSession({ ...fresh, cartVersion: `edited-${reverse}` }, [], fresh.cartVersion);
       const approve = () => repo.claimCheckout(fresh, `key-${reverse}`);
