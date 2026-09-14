@@ -9,7 +9,7 @@ async function setup() {
   const vite = await createServer({ configFile: false, root, resolve: { alias: { "@": root } }, server: { middlewareMode: true, hmr: false } });
   const db = createD1(); globalThis.__INTENTCART_DB__ = db;
   const routes = {};
-  for (const path of ["auth/register", "auth/login", "auth/logout", "auth/me", "auth/password", "catalogue", "agent", "cart", "checkout", "audit", "merchant"]) routes[path] = await vite.ssrLoadModule(`/app/api/${path}/route.ts`);
+  for (const path of ["auth/register", "auth/login", "auth/logout", "auth/me", "auth/password", "auth/recovery-code", "auth/reset", "catalogue", "agent", "cart", "checkout", "audit", "merchant"]) routes[path] = await vite.ssrLoadModule(`/app/api/${path}/route.ts`);
   const send = (path, { method = "GET", cookie = "", body, origin = "http://localhost", url = "http://localhost", headers = {} } = {}) => {
     const route = path.split("?")[0];
     return routes[route][method](new Request(`${url}/api/${path}`, { method, headers: { "Content-Type": "application/json", origin, cookie, ...headers }, ...(method !== "GET" ? { body: JSON.stringify(body ?? {}) } : {}) }));
@@ -100,12 +100,56 @@ test("mutations require a matching origin, bounded bodies and limited sign-in at
   const app = await setup();
   try {
     const cookie = await app.register("csrf_owner");
-    for (const [path, method] of [["agent", "POST"], ["cart", "POST"], ["checkout", "POST"], ["catalogue", "PUT"], ["auth/logout", "POST"], ["auth/password", "POST"], ["auth/login", "POST"], ["auth/register", "POST"]]) {
+    for (const [path, method] of [["auth/reset", "POST"], ["auth/recovery-code", "POST"], ["agent", "POST"], ["cart", "POST"], ["checkout", "POST"], ["catalogue", "PUT"], ["auth/logout", "POST"], ["auth/password", "POST"], ["auth/login", "POST"], ["auth/register", "POST"]]) {
       assert.equal((await app.send(path, { method, cookie, origin: "https://attacker.invalid" })).status, 403, path);
       assert.equal((await app.send(path, { method, cookie, origin: "" })).status, 403, path);
     }
     assert.equal((await app.send("agent", { method: "POST", cookie, body: { intent: "x".repeat(20000) } })).status, 413);
     for (let i = 0; i < 8; i++) assert.equal((await app.send("auth/login", { method: "POST", body: { username: "not_a_user", password: "wrong" } })).status, 401);
     assert.equal((await app.send("auth/login", { method: "POST", body: { username: "not_a_user", password: "wrong" } })).status, 429);
+  } finally { await app.close(); }
+});
+
+test("recovery codes are hashed, rotated, consumed once and revoke all sessions", async () => {
+  const app = await setup();
+  try {
+    const signup = await app.send("auth/register", { method: "POST", body: { username: "recover_owner", password: "Long test password 123!", storeName: "Recovery store" } });
+    assert.equal(signup.status, 201);
+    const initial = (await signup.json()).recoveryCode;
+    assert.match(initial, /^[a-f0-9]{64}$/);
+    assert.equal(signup.headers.get("cache-control"), "no-store");
+    const cookie = signup.headers.get("set-cookie").split(";")[0];
+    const row = await app.db.prepare("SELECT recovery_hash FROM merchants WHERE username = 'recover_owner'").first();
+    assert.notEqual(row.recovery_hash, initial);
+    const rotate = (password) => app.send("auth/recovery-code", { method: "POST", cookie, body: { currentPassword: password } });
+    assert.equal((await rotate("wrong")).status, 403);
+    const rotation = await rotate("Long test password 123!");
+    assert.equal(rotation.status, 200);
+    const code = (await rotation.json()).recoveryCode;
+    assert.notEqual(code, initial);
+    const reset = (recoveryCode, username = "recover_owner") => app.send("auth/reset", { method: "POST", body: { username, recoveryCode, newPassword: "My replacement password 456!" } });
+    assert.equal((await reset(initial)).status, 400);
+    assert.equal((await reset(code, "someone_else")).status, 400);
+    const login = await app.send("auth/login", { method: "POST", body: { username: "recover_owner", password: "Long test password 123!" } });
+    const second = login.headers.get("set-cookie").split(";")[0];
+    const concurrent = await Promise.all([reset(code), reset(code)]);
+    assert.deepEqual(concurrent.map(r => r.status).sort(), [200, 400]);
+    assert.equal((await reset(code)).status, 400);
+    for (const session of [cookie, second]) assert.equal((await app.send("auth/me", { cookie: session })).status, 401);
+    assert.equal((await app.db.prepare("SELECT recovery_hash FROM merchants WHERE username = 'recover_owner'").first()).recovery_hash, null);
+    assert.equal((await app.send("auth/login", { method: "POST", body: { username: "recover_owner", password: "Long test password 123!" } })).status, 401);
+    assert.equal((await app.send("auth/login", { method: "POST", body: { username: "recover_owner", password: "My replacement password 456!" } })).status, 200);
+  } finally { await app.close(); }
+});
+
+test("recovery rejects oversized requests and rate limits guessing without changing credentials", async () => {
+  const app = await setup();
+  try {
+    const cookie = await app.register("limited_owner");
+    assert.equal((await app.send("auth/reset", { method: "POST", body: { recoveryCode: "a".repeat(20000) } })).status, 413);
+    for (let i = 0; i < 5; i++) assert.equal((await app.send("auth/reset", { method: "POST", body: { username: "limited_owner", recoveryCode: "a".repeat(64), newPassword: "Another test password!" } })).status, 400);
+    assert.equal((await app.send("auth/reset", { method: "POST", body: { username: "limited_owner", recoveryCode: "a".repeat(64), newPassword: "Another test password!" } })).status, 429);
+    assert.equal((await app.send("auth/me", { cookie })).status, 200);
+    assert.equal((await app.send("auth/recovery-code", { method: "POST", body: { currentPassword: "Long test password 123!" } })).status, 401);
   } finally { await app.close(); }
 });

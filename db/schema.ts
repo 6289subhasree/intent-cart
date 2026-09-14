@@ -1,6 +1,7 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const merchants = sqliteTable("merchants", {
+  recoveryHash: text("recovery_hash"),
   id: text("id").primaryKey(), username: text("username").notNull().unique(), passwordHash: text("password_hash").notNull(), createdAt: text("created_at").notNull(),
 });
 export const stores = sqliteTable("stores", {

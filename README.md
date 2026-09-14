@@ -347,7 +347,7 @@ The suite covers the complete session lifecycle, not only isolated helpers:
 - catalogue price calculation and invalid-item handling; and
 - production Worker rendering and shared UI semantics.
 
-The API lifecycle tests apply all SQL migrations to an in-memory SQLite database with a D1 adapter. Authentication tests create two actual accounts and exercise separate catalogues, foreign session IDs, scoped analytics, cookie expiry, logout, password changes, origin checks and login throttling. Provider responses are controlled in tests. The local D1 migration is also checked separately; these checks are not a substitute for production security review.
+The API lifecycle tests apply all SQL migrations to an in-memory SQLite database with a D1 adapter. Authentication tests create two actual accounts and exercise separate catalogues, foreign session IDs, scoped analytics, cookie expiry, logout, password changes, recovery-code rotation and concurrent single-use resets, origin checks and login/reset throttling. Provider responses are controlled in tests. The local D1 migration is also checked separately; these checks are not a substitute for production security review.
 
 ## Merchant accounts and store ownership
 
@@ -377,12 +377,14 @@ Passwords use PBKDF2-HMAC-SHA256 with a random salt and 600,000 iterations. The 
 | `GET /api/auth/me` | Return the current owner’s store identity |
 | `POST /api/auth/logout` | Revoke the current session |
 | `POST /api/auth/password` | Change password and revoke other sessions |
+| `POST /api/auth/recovery-code` | Generate a replacement recovery code after checking the current password |
+| `POST /api/auth/reset` | Consume a recovery code, reset the password and revoke all sessions |
 | `GET /api/catalogue` | Read the owner’s catalogue and version |
 | `PUT /api/catalogue` | Update that catalogue using its current version |
 
 Catalogue edits affect only the owner’s store. Recommendation and fallback logic receive that catalogue explicitly; they do not mutate a shared module-level list. Checkout recalculates against the current store catalogue and rejects a changed total. Its database claim also checks the catalogue version, closing the gap if a catalogue edit wins just before checkout.
 
-This release is a private owner workspace, not yet a public storefront. Staff invitations, password recovery, MFA, account deletion, general product import and per-store payment-provider credentials are still missing. Save your password. The catalogue editor manages the existing five product categories; renaming a product does not change its category. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
+This release is a private owner workspace, not yet a public storefront. Staff invitations, email-based recovery, MFA, account deletion, general product import and per-store payment-provider credentials are still missing. Save your password and recovery code. The catalogue editor manages the existing five product categories; renaming a product does not change its category. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
 
 ## Repository map
 
@@ -426,9 +428,32 @@ worker/index.ts              Cloudflare Worker entry point
 
 - Merchant-managed catalogue ingestion instead of the bundled five-product catalogue.
 - Webhook-driven inventory updates.
-- Staff roles, password recovery, MFA and public shopper access with session ownership.
+- Staff roles, email-based recovery, MFA and public shopper access with session ownership.
 - Expiring approval tokens for long-running carts.
 - Provider webhook reconciliation for order status.
 - Observability around model latency, fallback rate and policy rejection reasons.
 
 Those are deliberately separate from the current core: the repository already demonstrates the full recommendation → policy → persisted session → approval → test order → audit loop end to end.
+
+## Recovering a merchant account
+
+Signup shows a random recovery code once. Save it in a password manager alongside your username before opening the store. Existing accounts can generate a code from **Account → Password recovery** by entering their current password. Generating a new code invalidates the previous one.
+
+On the sign-in page, choose **Forgot password?**, enter your username and saved code, and choose a new password. A successful reset consumes the code and signs out every existing session. Sign in again, then generate a replacement code for next time. Ordinary password changes leave your saved recovery code valid.
+
+There is no email service or verified email address in the account model yet. Recovery therefore requires a code saved in advance; knowing a username is not sufficient. If you lose both your password and recovery code, this self-service flow cannot restore access.
+
+The server stores a SHA-256 digest of the random 256-bit code, never its plaintext. Reset attempts are rate limited by username and IP. Updating the password, consuming the code and revoking sessions share one database transaction; concurrent uses of the same code allow only one successful reset. The code is returned only at signup or authenticated generation, in a response marked `no-store`, and is not placed in browser storage or URLs.
+
+```mermaid
+flowchart TD
+  A["Signup or authenticated code generation"] --> B["Show code once; store its digest"]
+  B --> C["Owner saves code privately"]
+  C --> D["Forgot password: username, code, new password"]
+  D --> E{"Origin, rate limit and code checks"}
+  E -->|Rejected| F["Keep credentials unchanged"]
+  E -->|Accepted| G["Atomic password update, code consumption and session revocation"]
+  G --> H["Sign in and generate a new code"]
+```
+
+After updating an existing checkout, `npm run dev` applies the new recovery-column migration automatically. It preserves accounts and store records; existing accounts initially have no recovery code.

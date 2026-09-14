@@ -1,0 +1,1 @@
+ALTER TABLE `merchants` ADD `recovery_hash` text;

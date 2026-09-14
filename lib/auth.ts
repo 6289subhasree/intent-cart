@@ -11,6 +11,7 @@ export class AccessError extends Error {
   constructor(message: string, public status = 401) { super(message); }
 }
 export const hashToken = (value: string) => createHash("sha256").update(value).digest("hex");
+export const newRecoveryCode = () => randomBytes(32).toString("hex");
 
 function derive(password: string, salt: string) {
   return new Promise<Buffer>((resolve, reject) => pbkdf2(password, salt, 600000, 32, "sha256", (error, key) => error ? reject(error) : resolve(key)));
@@ -67,12 +68,12 @@ export async function rateLimit(key: string, limit: number, seconds = 900) {
     ON CONFLICT(key) DO UPDATE SET count = count + 1 RETURNING count`).bind(scopedKey, (bucket + 1) * seconds * 1000).first<{ count: number }>();
   if (!row || row.count > limit) throw new AccessError("Too many attempts. Please try again later.", 429);
 }
-export async function createMerchant(username: string, password: string, name: string) {
+export async function createMerchant(username: string, password: string, name: string, recoveryHash: string) {
   const db = await database(); const merchantId = crypto.randomUUID(); const storeId = crypto.randomUUID(); const now = new Date().toISOString();
   const passwordHash = await hashPassword(password);
   try {
     await db.batch([
-      db.prepare("INSERT INTO merchants (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)").bind(merchantId, username, passwordHash, now),
+      db.prepare("INSERT INTO merchants (id, username, password_hash, created_at, recovery_hash) VALUES (?, ?, ?, ?, ?)").bind(merchantId, username, passwordHash, now, recoveryHash),
       db.prepare("INSERT INTO stores (id, owner_id, name, catalogue_json, catalogue_version, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(storeId, merchantId, name, JSON.stringify(catalogue), crypto.randomUUID(), now),
     ]);
   } catch (error) {
