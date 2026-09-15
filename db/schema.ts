@@ -7,6 +7,12 @@ export const merchants = sqliteTable("merchants", {
 export const stores = sqliteTable("stores", {
   id: text("id").primaryKey(), ownerId: text("owner_id").notNull().unique().references(() => merchants.id), name: text("name").notNull(), catalogueJson: text("catalogue_json").notNull(), catalogueVersion: text("catalogue_version").notNull(), createdAt: text("created_at").notNull(),
 });
+export const experimentAssignments = sqliteTable("experiment_assignments", {
+  merchantId: text("merchant_id").primaryKey().references(() => merchants.id),
+  variant: text("variant").notNull(), assignedAt: integer("assigned_at").notNull(),
+  exposedAt: integer("exposed_at"), convertedAt: integer("converted_at"),
+  sessionId: text("session_id"), orderedAt: integer("ordered_at"),
+});
 export const authSessions = sqliteTable("auth_sessions", {
   tokenHash: text("token_hash").primaryKey(), merchantId: text("merchant_id").notNull().references(() => merchants.id), expiresAt: integer("expires_at").notNull(),
 }, (table) => [index("idx_auth_expiry").on(table.expiresAt)]);

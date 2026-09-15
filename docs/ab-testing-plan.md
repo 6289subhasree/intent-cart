@@ -1,30 +1,39 @@
-# IntentCart experiment plan
+# IntentCart first-cart experiment
 
-Run functional acceptance checks before exposing an experiment. This document defines the next stage; it does not enable traffic splitting or collect analytics.
+Implementation is available and disabled by default. Experiment ID: `category-examples-v1`. This is an owner-workspace onboarding experiment, not a public-shopper conversion test.
 
-## Acceptance gate
+## Local setup
 
-- Two merchant accounts cannot access each other's catalogue, orders or audit details.
-- An imported product can be recommended, approved and ordered at the saved price.
-- Two carts competing for one unit produce only one successful reservation.
-- Provider timeouts keep orders and stock locked; verified terminal outcomes resolve once.
-- Recovery codes are single-use and reset invalidates old sessions.
-- Check the landing, sign-in, shopping, catalogue and Orders screens on desktop and mobile.
+1. Pull the latest code and run `npm run dev` to apply the migration.
+2. In `.env.local`, set `INTENTCART_AB_ADMIN_USERS` to your existing account's username to allow aggregate results access.
+3. Set `INTENTCART_AB_ENABLED=true` only when ready for a local smoke test, then restart the server.
+4. Create fresh merchant accounts with no prior carts. Open Shop with AI. Assignment is random and persistent: A sees the request box, B also sees up to three category examples. Multiple fresh accounts may be needed to observe both groups.
+5. Refresh or open another tab: the account must keep its assignment.
+6. Build a valid cart and complete a test checkout. The Experiments page shows assignments/exposures immediately; conversion counts/rates enter the comparison only after the merchant's full 24-hour window has finished.
+7. Set the flag back to false after testing. Add all test usernames to `INTENTCART_AB_EXCLUDED_USERS` before starting a separate real study.
 
-## First experiment
+All three configuration variables are server-only. Excluded usernames are comma separated. Set exclusions before enrollment: changing the exclusion list stops future enrollment/tracking but does not erase previously recorded data. Keep local smoke-test data separate from any hosted study.
 
-Question: do category-specific example requests help merchants build their first valid cart?
+## Assignment, exposure and attribution
 
-- Control: the existing request box.
-- Variant: the same request box with three clickable examples generated from the current store's categories. Example selection only fills the text box; building a cart still requires a click.
-- Randomization unit: merchant account, assigned once and stored server-side. Keep assignment stable across sessions and devices. Exclude internal/test accounts before assignment.
-- Exposure: record once when the assigned UI is actually shown. Do not count a route request as exposure.
-- Primary metric: share of exposed merchants who create their first valid cart within 24 hours.
-- Secondary metrics: no-match rate, time to first valid cart and checkout completion. Test-order completion is not paid conversion or revenue.
-- Guardrails: provider error rate, latency, policy violations and cross-store leakage. Both variants use identical budgets, approval, stock and recovery rules.
+Only merchants with no shopping sessions are enrolled. A single database row per merchant fixes random assignment across devices and tabs; the unique key resolves concurrent requests. GET assignment does not count exposure. The browser records exposure after the assigned request area intersects the viewport in a visible tab. An authenticated, origin-checked POST stores the first exposure timestamp once. Tracking failures do not block shopping; missed exposures are not fabricated later.
 
-Record experiment ID, merchant assignment, exposure time and outcome event IDs; deduplicate events on the server. Avoid raw request text, secrets or payment details in experiment events. Export aggregate results per variant. Implement event retention and owner access controls before collection.
+A successful first cart is attributed on the server in the same transaction that saves it, provided exposure preceded it and it falls within 24 hours. Later carts cannot replace the first-cart outcome. Order creation for that same cart is attributed once, within the same 24-hour window, in the order transaction. Failed/no-match requests are not conversions. Both groups use identical price, inventory, approval and recovery rules.
 
-First gather baseline traffic and conversion. Then choose the minimum useful uplift, sample size and fixed stopping rule before launching. A handful of local sessions can validate assignment and logging; it cannot establish a conversion winner. Use uncertainty intervals and report inconclusive results honestly. Do not repeatedly stop when a result first looks positive.
+## Results and limits
 
-Needed implementation before launch: assignment persistence, exposure and conversion events, event deduplication, retention policy, an experiment flag, results view and assignment/attribution tests. No experiment is active in this release.
+Only usernames explicitly listed in `INTENTCART_AB_ADMIN_USERS` can read cross-store aggregates at Merchant → Experiments. No merchant identifiers, shopping text or API credentials appear in the results response. The page shows assignments, exposures, completed observation windows, first-cart conversion and first-cart order creation. Order creation is not payment or revenue.
+
+No winner, significance or sample-size claim is generated. Choose baseline, minimum useful uplift, sample size and stopping rule before collecting study data. A few local accounts test wiring only. No-match rates, latency comparisons, exports and uncertainty intervals are not implemented in this first version.
+
+## Retention and operation
+
+The experiment table stores merchant ID, variant, assignment/exposure/outcome timestamps and the first converted session ID. It stores no raw shopping text or payment credentials. Rows currently persist until explicit database maintenance; there is no automatic retention job. For a real study, choose a retention period (suggested maximum 90 days), stop enrollment/tracking at the study end, export only approved aggregate results and delete experiment rows under an operator-reviewed maintenance procedure. Do not re-enable this experiment after clearing its rows: a new study needs a new version/table strategy to prevent re-enrollment and mixed results.
+
+Turning `INTENTCART_AB_ENABLED=false` stops enrollment, exposure and outcome tracking; stored results remain readable by configured administrators. Pausing during observation can lose outcomes, so treat interrupted runs as invalid rather than silently interpreting them.
+
+## Validation
+
+Automated tests cover disabled-by-default behavior, concurrent stable assignment, exposure deduplication, rejected client-supplied variants, origin checks, server-side first-cart/order attribution, retry deduplication, completed observation windows, restricted aggregate access, exclusions and refusal to enroll existing cart builders.
+
+Before a real launch, also inspect both variants on desktop/mobile, verify actual browser exposure behavior, and complete the remaining operational/statistical requirements above.

@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from "@/components/ui/progress";
 import { eligibleProducts, parseShoppingIntent } from "@/lib/shopping-intent";
 
+import { ExperimentExamples } from "@/components/experiment-examples";
 import { AccountMenu, useMerchantAccount } from "@/components/merchant-account";
 import type { CatalogueProduct } from "@/lib/commerce";
 
@@ -162,7 +163,7 @@ export default function DemoPage() {
           <div className="panel-kicker"><Bot size={16} /> Shopping agent</div>
           <h1>What should I find for you?</h1>
           <p>Describe the person, occasion, budget and delivery need. IntentCart handles the rest.</p>
-          <label className="intent-box"><span className="sr-only">Shopping request</span><textarea disabled={stage === "thinking" || busyAction !== null} value={request} onChange={(event) => setRequest(event.target.value)} rows={7} maxLength={500} /><div><span><Zap size={13} /> Agent-ready catalogue</span><span>{request.length}/500</span></div></label>
+          <ExperimentExamples onSelect={setRequest} disabled={stage === "thinking" || busyAction !== null}><label className="intent-box"><span className="sr-only">Shopping request</span><textarea disabled={stage === "thinking" || busyAction !== null} value={request} onChange={(event) => setRequest(event.target.value)} rows={7} maxLength={500} /><div><span><Zap size={13} /> Agent-ready catalogue</span><span>{request.length}/500</span></div></label></ExperimentExamples>
           <div className="constraint-list"><button><CircleDollarSign /><span><small>Budget</small>{money(budget)}</span><Check size={15} /></button><button><Gift /><span><small>Occasion mentioned</small>{occasion}</span><Check size={15} /></button><button><Clock3 /><span><small>Requested delivery</small>{deliveryRequest}</span><Check size={15} /></button></div>
           <Button className="build-button" onClick={buildCart} disabled={busyAction !== null || stage === "thinking" || request.trim().length < 8}>{stage === "thinking" ? <Sparkles className="pulse" /> : <Search />}{stage === "thinking" ? "Comparing products…" : session ? "Build a new cart" : "Build my cart"}</Button>
           <div className="trust-note"><ShieldCheck size={15} /><span><strong>You stay in control.</strong> Recommendations can change the cart, but spending requires approval of the current version.</span></div>

@@ -1,5 +1,6 @@
 import type { CartLine, CatalogueProduct, PolicyResult } from "@/lib/commerce";
 import { paymentProviderIdentity } from "@/lib/payment-identity";
+import { experimentEnabled } from "@/lib/experiment";
 
 type Statement = {
   bind: (...values: unknown[]) => Statement;
@@ -88,6 +89,7 @@ export async function createSession(session: StoredSession, events: AuditEventIn
       JSON.stringify(session.policy), session.createdAt, session.updatedAt, session.approvedAt, session.orderId,
     ),
     ...events.map((event, index) => eventStatement(db, session.id, index + 1, event, session.createdAt)),
+    ...experimentOutcome(db, session, false),
   ];
   await db.batch(statements);
 }
@@ -121,9 +123,19 @@ export async function completeOrder(session: StoredSession, order: { id: string;
     db.prepare(`INSERT INTO orders (id, session_id, provider_order_id, amount, currency, status, mode, idempotency_key, created_at)
       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM shopping_sessions WHERE id = ? AND json_extract(policy_json, '$.checkoutAttempt.resolutionId') = ?)`).bind(order.id, order.sessionId, order.providerOrderId, order.amount, order.currency, order.status, order.mode, order.idempotencyKey, order.createdAt, session.id, resolutionId),
     ...events.map(event => conditionalEvent(db, session, event, "json_extract(policy_json, '$.checkoutAttempt.resolutionId') = ?", resolutionId)),
+    ...experimentOutcome(db, session, true),
   ]);
   if (Number((results[0] as { meta: { changes: number } }).meta.changes) !== 1) throw new Error("Checkout already resolved");
 }
+function experimentOutcome(db: Database, session: StoredSession, ordered: boolean) {
+  if (!experimentEnabled()) return [];
+  const now = Date.now();
+  const excluded = JSON.stringify((process.env.INTENTCART_AB_EXCLUDED_USERS ?? "").split(",").map(s => s.trim().toLowerCase()));
+  const owner = "merchant_id = (SELECT owner_id FROM stores WHERE id = ?) AND merchant_id NOT IN (SELECT id FROM merchants WHERE username IN (SELECT value FROM json_each(?)))";
+  if (ordered) return [db.prepare(`UPDATE experiment_assignments SET ordered_at = ? WHERE ${owner} AND session_id = ? AND ordered_at IS NULL AND ? BETWEEN exposed_at AND exposed_at + 86400000 AND EXISTS (SELECT 1 FROM shopping_sessions WHERE id = ? AND status = 'ordered')`).bind(now, session.storeId, excluded, session.id, now, session.id)];
+  return [db.prepare(`UPDATE experiment_assignments SET converted_at = ?, session_id = ? WHERE ${owner} AND converted_at IS NULL AND ? BETWEEN exposed_at AND exposed_at + 86400000 AND NOT EXISTS (SELECT 1 FROM shopping_sessions WHERE store_id = ? AND id != ?)`).bind(now, session.id, session.storeId, excluded, now, session.storeId, session.id)];
+}
+
 function conditionalEvent(db: Database, session: StoredSession, event: AuditEventInput, condition: string, value: string) {
   return db.prepare(`INSERT INTO audit_events (id, session_id, sequence, type, state, title, detail, metadata_json, created_at)
     SELECT ?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM audit_events WHERE session_id = ?), ?, ?, ?, ?, ?, ?
