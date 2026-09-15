@@ -10,6 +10,20 @@ IntentCart recommends a bundle from the merchant catalogue, explains each choice
 
 The important part is the boundary: the recommendation layer can suggest products, but it cannot authorize money. Catalogue validation, price calculation, inventory checks, cart versioning and approval all live in regular server code.
 
+## Reviewer walkthrough
+
+**Focus:** AI recommendations connected to a stateful commerce workflow, with server-enforced approval and recovery.
+
+1. Open the [buyer flow](https://intent-cart.subhasree6289.chatgpt.site/demo); create a store if prompted.
+2. With the sample catalogue, request `Only sunscreen. No cleanser, serum or gift wrap. Budget ₹600.`
+3. Inspect the selected item, server-calculated total and policy result. Change the quantity and observe revalidation.
+4. Build a valid cart, approve its current version and create a test order.
+5. Open the audit trail to inspect the recorded decisions. Explore catalogue import and Orders from the merchant console.
+
+**Read the implementation:** [request policy](lib/commerce.ts), [checkout API](app/api/checkout/route.ts), [reconciliation API](app/api/orders/reconcile/route.ts), [concurrency tests](tests/checkout-concurrency.test.mjs), and [recovery tests](tests/order-recovery.test.mjs).
+
+**Evidence boundary:** the controlled evaluation fixture is not customer traction or measured conversion uplift. Checkout creates test orders; A/B assignment and analytics are not active.
+
 ## Try it
 
 | Surface | Purpose |
@@ -156,7 +170,7 @@ stateDiagram-v2
     Ordered --> Ordered: Return saved order
 ```
 
-`Review` is represented by an approved session with an unknown checkout attempt in its policy JSON. A timeout, invalid provider response or failed local order save leaves the claim locked. There is no automatic claim expiry: releasing it without reconciling the provider could duplicate an order. The audit trace retains the attempt ID and idempotency key, and the policy retains a provider order ID when one was observed. A process interruption can leave a pending claim, which also stays locked. An operator reconciliation workflow is not implemented yet; do not clear these records or submit a replacement order without checking the provider.
+`Review` is represented by an approved session with an unknown checkout attempt in its policy JSON. A timeout, invalid provider response or failed local order save leaves the claim locked. There is no automatic claim expiry: releasing it without reconciling the provider could duplicate an order. The audit trace retains the attempt ID and idempotency key, and the policy retains a provider order ID when one was observed. A process interruption can leave a pending claim, which also stays locked. An operator reconciliation workflow is available through Merchant → Orders with the adapter contract described above. Unconfirmed outcomes remain locked; do not clear these records or submit a replacement order without checking the provider.
 
 This prevents concurrent provider submissions for the same saved session. It does not deduplicate separate shopping sessions or guarantee a provider's own idempotency behavior. Provider tests use controlled responses, including timeout, mismatched amounts and a failed database save after provider success.
 
@@ -225,7 +239,7 @@ Try `Only sunscreen. No cleanser, serum or gift wrap. Budget ₹600.` The result
 
 The parser reads merchant-defined categories as request keywords and retains aliases for cleanser, serum, sunscreen/SPF and gift wrap. Sensitive-skin and fragrance-free checks use catalogue tags. Explicitly named categories restrict the selection. Budgets support rupee symbols, INR/Rs, commas, decimals and `k`. Delivery supports today, tomorrow, numeric day limits and weekdays; weekday calculations use UTC and the session creation date, and remain catalogue estimates. Other delivery formats ask for clarification. Requested quantities ask the buyer to use the cart controls. This is not yet a general natural-language constraint engine: compound requests, unsupported items mixed with supported items, and arbitrary ingredient restrictions still need stronger extraction and confirmation.
 
-If no suitable selection covers the explicitly requested categories within budget, `/api/agent` returns HTTP 422 with `NO_MATCH`; unsupported input returns `CLARIFICATION_REQUIRED`. These attempts do not yet create an audit session. Buyers can remove products after the initial selection. Merchant catalogue ingestion and persisted constraint schemas remain follow-up work.
+If no suitable selection covers the explicitly requested categories within budget, `/api/agent` returns HTTP 422 with `NO_MATCH`; unsupported input returns `CLARIFICATION_REQUIRED`. These attempts do not yet create an audit session. Buyers can remove products after the initial selection. CSV/JSON catalogue import is available through the merchant editor, as described below. Automated platform synchronization and persisted constraint schemas remain follow-up work.
 
 Gemini is configured on the server using `GEMINI_API_KEY` and `GEMINI_MODEL`. The example model is `gemini-3.5-flash-lite`, which was verified with the development account; model access depends on your account. Provider errors or invalid selections use the constrained fallback. The UI shows the policy result instead of presenting the model's uncalibrated fit score as a measured percentage.
 
