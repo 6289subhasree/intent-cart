@@ -1,302 +1,321 @@
 # IntentCart
 
-IntentCart turns a shopping request into a cart that can explain itself.
+> **Bounded agentic commerce:** turn a natural-language shopping request into an explainable, buyer-approved cart without giving the model control over money.
 
-Instead of opening ten product tabs, a buyer can write:
+[Live demo](https://intent-cart.subhasree6289.chatgpt.site/) · [Buyer flow](https://intent-cart.subhasree6289.chatgpt.site/demo) · [Merchant console](https://intent-cart.subhasree6289.chatgpt.site/merchant)
 
-> Build a skincare gift for my sister under ₹2,000. She has sensitive skin, and I need it delivered by Friday.
+---
 
-IntentCart recommends a bundle from the merchant catalogue, explains each choice, checks the cart against the buyer's limits, and asks for approval of the exact cart version before creating a test order.
+## The idea
 
-The important part is the boundary: the recommendation layer can suggest products, but it cannot authorize money. Catalogue validation, price calculation, inventory checks, cart versioning and approval all live in regular server code.
+A buyer should be able to say:
 
-## Reviewer walkthrough
+> “Build a skincare gift for my sister under ₹2,000. She has sensitive skin, and I need it by Friday.”
 
-**Focus:** AI recommendations connected to a stateful commerce workflow, with server-enforced approval and recovery.
+IntentCart turns that request into a real application workflow:
 
-1. Open the [buyer flow](https://intent-cart.subhasree6289.chatgpt.site/demo); create a store if prompted.
-2. With the sample catalogue, request `Only sunscreen. No cleanser, serum or gift wrap. Budget ₹600.`
-3. Inspect the selected item, server-calculated total and policy result. Change the quantity and observe revalidation.
-4. Build a valid cart, approve its current version and create a test order.
-5. Open the audit trail to inspect the recorded decisions. Explore catalogue import and Orders from the merchant console.
+**Intent → Recommendation → Validation → Policy → Approval → Checkout → Audit**
 
-**Read the implementation:** [request policy](lib/commerce.ts), [checkout API](app/api/checkout/route.ts), [reconciliation API](app/api/orders/reconcile/route.ts), [concurrency tests](tests/checkout-concurrency.test.mjs), and [recovery tests](tests/order-recovery.test.mjs).
+The key design decision is simple:
 
-**Evidence boundary:** the controlled evaluation fixture is not customer traction or measured conversion uplift. Checkout creates test orders; A/B assignment and analytics are not active.
+> **The AI can recommend. The server decides.**
 
-## Try it
+The model never gets to authorize a payment, invent a product, set the final price, or bypass the buyer's constraints. Product IDs are validated against the merchant catalogue, prices are calculated server-side, inventory is checked again at checkout, and the buyer must approve the exact cart version.
 
-| Surface | Purpose |
-| --- | --- |
-| [Product page](https://intent-cart.subhasree6289.chatgpt.site/) | The product story and core idea |
-| [Buyer flow](https://intent-cart.subhasree6289.chatgpt.site/demo) | Build, edit, repair and approve a cart |
-| [Merchant console](https://intent-cart.subhasree6289.chatgpt.site/merchant) | Revenue, conversion, policy state and recent sessions |
-| [Audit trail](https://intent-cart.subhasree6289.chatgpt.site/audit) | The latest persisted decision trace |
+---
 
-Checkout runs in a test environment. The full order lifecycle is real application logic; no live payment is captured.
+## Why this project is interesting
 
-## What works today
+Most AI shopping demos stop at “the model recommended these products.”
 
-- Natural-language shopping requests with schema validation.
-- Model-backed recommendations when a Gemini or OpenAI key is configured.
-- Merchant accounts with a private store, editable sample catalogue and store-scoped records.
-- A deterministic recommendation path when the model is unavailable.
-- Catalogue-only product selection and server-calculated totals.
-- A cart that is populated from the recommendation API response.
-- Quantity changes and gift-wrap upsells revalidated on the server.
-- Durable shopping sessions, audit events and orders in Cloudflare D1.
-- Versioned carts that invalidate approval after every change.
-- An inventory-conflict path that blocks checkout before order creation.
-- Server-side repair using an in-stock replacement followed by fresh approval.
-- Idempotent test-order creation.
-- Merchant and audit pages generated from recorded session data.
-- Downloadable JSON traces.
+IntentCart treats the recommendation as **untrusted input** and connects it to a stateful commerce system.
 
-## System architecture
+That means the interesting engineering problems are not only AI:
+
+- What happens when the model suggests an invalid product?
+- What if the buyer changes the quantity after recommendation?
+- What if the catalogue changes before checkout?
+- What if two checkout requests race each other?
+- What if the payment provider times out after stock has been reserved?
+- What if the provider succeeds but saving the order fails?
+- How do you recover without accidentally creating a duplicate order?
+
+IntentCart has explicit server-side paths for these cases.
+
+---
+
+## Try the workflow
+
+### 1. Describe the outcome
+
+Open the [buyer flow](https://intent-cart.subhasree6289.chatgpt.site/demo) and try:
+
+`Only sunscreen. No cleanser, serum or gift wrap. Budget ₹600.`
+
+The system should select the ₹599 sunscreen rather than ignoring the exclusions or inventing a bundle.
+
+### 2. Inspect the decision
+
+The response shows:
+
+- selected catalogue products
+- reasons for the recommendation
+- server-calculated total
+- policy checks
+- cart version
+- recommendation mode
+
+### 3. Change the cart
+
+Edit the quantity and watch the server revalidate the cart.
+
+Approval is tied to the **exact cart version**, so changing the cart invalidates the previous approval.
+
+### 4. Approve and checkout
+
+The checkout request contains only:
+
+`sessionId + cartVersion + approval`
+
+It does **not** contain a trusted amount.
+
+The server reloads the authoritative session, recalculates the total and runs the policy again before creating a test order.
+
+### 5. Inspect the audit trail
+
+Open the [audit trail](https://intent-cart.subhasree6289.chatgpt.site/audit) to see the persisted sequence of decisions.
+
+The [merchant console](https://intent-cart.subhasree6289.chatgpt.site/merchant) also provides catalogue management, order recovery and store-scoped metrics.
+
+> **Demo note:** checkout uses test orders. No live customer payment is captured.
+
+---
+
+## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Browser["Browser"]
-        Buyer["Buyer workspace"]
-        Audit["Audit trail"]
-        Merchant["Merchant console"]
-    end
+flowchart LR
+    User["Buyer"] --> Intent["Natural-language intent"]
+    Intent --> Agent["Recommendation API"]
 
-    subgraph Worker["Cloudflare Worker"]
-        Agent["Recommendation API"]
-        Cart["Cart policy API"]
-        Checkout["Checkout API"]
-        Read["Audit and metrics APIs"]
-    end
+    Agent --> Boundary["UNTRUSTED AI OUTPUT"]
 
-    subgraph Core["Trusted application core"]
-        Catalogue["Versioned catalogue"]
-        Policy["Deterministic policy engine"]
-        Store["Session repository"]
-    end
+    Boundary --> Validate["Catalogue validation"]
+    Validate --> Policy["Deterministic policy engine"]
+    Policy --> Cart["Authoritative cart"]
+    Cart --> DB[("Cloudflare D1")]
 
-    Buyer --> Agent
-    Buyer --> Cart
-    Buyer --> Checkout
-    Audit --> Read
-    Merchant --> Read
-    Agent --> Catalogue
-    Agent --> Policy
-    Cart --> Policy
+    User --> Approve["Explicit approval"]
+    Approve --> Checkout["Checkout API"]
     Checkout --> Policy
-    Agent --> Store
-    Cart --> Store
-    Checkout --> Store
-    Read --> Store
-    Store --> D1[("Cloudflare D1")]
-    Agent -. optional .-> Model["OpenAI Responses API"]
-    Checkout -. optional .-> Provider["Test payment order API"]
+    Checkout --> Claim["Atomic checkout claim"]
+    Claim --> Provider["Test order provider"]
+    Claim --> DB
+
+    DB --> Audit["Audit trail"]
+    DB --> Merchant["Merchant console"]
+
+    Model["Optional LLM"] -. "recommendations only" .-> Agent
 ```
 
-The model sits outside the trusted boundary. Its product IDs are checked against the catalogue and its proposed total is ignored. The server looks up current prices and computes the amount itself.
+### Trusted boundary
 
-## Checkout lifecycle
+The recommendation model sits outside the trusted commerce boundary.
 
-```mermaid
-sequenceDiagram
-    actor B as Buyer
-    participant UI as Buyer workspace
-    participant A as Recommendation API
-    participant P as Policy engine
-    participant DB as D1
-    participant C as Checkout API
-    participant Pay as Test payment API
+The server:
 
-    B->>UI: Describe desired outcome
-    UI->>A: POST /api/agent
-    A->>P: Validate catalogue IDs and total
-    P-->>A: Policy result
-    A->>DB: Save session and initial events
-    A-->>UI: Cart, reasons, version and policy
-    B->>UI: Edit or approve cart
-    UI->>C: Session ID + cart version + approval
-    C->>DB: Load authoritative session
-    C->>P: Recalculate current cart
-    alt stale, blocked or outside policy
-        P-->>C: Reject
-        C-->>UI: Checkout blocked
-    else current and approved
-        P-->>C: Pass
-        C->>Pay: Create test order with idempotency key
-        C->>DB: Save order and approval events
-        C-->>UI: Order created
-    end
-```
+1. validates every product ID against the current catalogue;
+2. ignores any model-proposed total;
+3. calculates the total from catalogue prices;
+4. checks quantity, stock, delivery and budget constraints;
+5. persists the authoritative cart;
+6. requires explicit buyer approval;
+7. compares the submitted cart version atomically; and
+8. recalculates the policy immediately before checkout.
 
-The checkout request deliberately does not contain an amount. It contains only the session ID, current cart version and explicit approval. The server loads the cart from D1 and calculates the amount from catalogue prices.
+This makes the model useful without making it authoritative.
 
-## Inventory failure and recovery
+---
 
-Open **Merchant → Orders** for pending, created and cancelled checkouts. **Check outcome & recover** waits at least one minute after approval, then checks the configured reconciliation adapter. It never submits another order. A confirmed existing order is saved; a terminal cancellation or non-creation confirmation restores stock once. Duplicate recovery requests and late checkout completions compete for the same database transition. Unconfirmed responses retain the reservation.
+## Checkout reliability
 
-For external providers, configure `PAYMENT_RECONCILE_API_URL` with an HTTPS adapter you control. The server POSTs `{ idempotencyKey, orderId?, amount, currency }`, using the existing payment Basic credentials. The adapter must return `{ idempotencyKey, amount, currency: "INR", terminal: true, outcome: "created" | "cancelled" | "not_created", orderId? }`. Created outcomes require an order ID; an already observed order ID must match. **Only return terminal non-creation after guaranteeing that this idempotency key cannot create an order later.** A normal lookup 404 or eventual-consistency miss is not that guarantee and is rejected. This is an adapter contract, not a universal payment-provider API. With no adapter configured, external recovery remains locked. Local test-mode checkouts can be released without an external lookup because they have no external side effect.
+Checkout is deliberately treated as a distributed-systems problem rather than a single API call.
 
-Checkout reserves stock before contacting the order provider. The database updates the approval claim and the store’s available quantities in one transaction, guarded by the catalogue version. Two carts competing for the last unit cannot both reserve it. A stale catalogue-editor save is rejected rather than restoring stock from an old screen.
+### Versioned carts
 
-The catalogue editor’s **Available units** field excludes checkout reservations. Successful orders keep that deduction; repeated checkout requests do not deduct again. If the provider times out or the local order save fails, stock remains reserved while the order is locked for review. Reservations do not expire automatically: releasing stock without confirming the provider’s outcome could allow an item to be sold twice. Provider reconciliation and reservation release are available through Orders using the adapter contract above. Initiating provider cancellations or refunds remains separate work. Existing orders created before this update are not deducted retroactively.
+Every cart has a version.
 
-Each reservation appears in the audit trail as **Stock reserved for checkout**. Tests cover competing carts, retry safety, stale editor saves, transaction rollback, and stock retention after uncertain outcomes.
+If a stale browser submits an older version, the server rejects the write instead of silently overwriting newer state.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Ready: Recommendation saved
-    Ready --> Ready: Quantity or upsell change
-    Ready --> Blocked: Inventory conflict
-    Blocked --> Ready: Replacement + revalidation
-    Ready --> Ordered: Exact version approved
-    Ordered --> Ordered: Duplicate request reuses order
-```
+### Atomic checkout claim
 
-The inventory-conflict control marks a product in the saved cart unavailable for that session. The exclusion is stored in the policy JSON and survives cart edits, repair attempts and server restarts. Repair looks for an available product in the same category that passes the request checks. If no replacement fits, the buyer must remove the item or change the request. This is a session-level failure exercise; merchant-wide stock synchronisation and authenticated inventory webhooks are still separate work.
+Before contacting the order provider, the server atomically changes the session from ready to approved and reserves inventory.
 
-### Concurrent checkout and uncertain outcomes
+This prevents concurrent checkout requests from creating multiple provider orders for the same session.
 
-Cart updates compare the submitted version inside the database write. Only the winning update changes the cart and appends its audit events. Checkout similarly changes a ready session to approved in a database batch before contacting the order provider. That saved claim locks cart edits and other checkout requests. Audit sequence numbers are allocated inside the write batch.
+### Idempotency
 
-```mermaid
-stateDiagram-v2
-    [*] --> Ready
-    Ready --> Blocked: Inventory conflict
-    Blocked --> Ready: Valid edit or replacement
-    Ready --> Approved: Atomic checkout claim
-    Approved --> Ordered: Valid response saved
-    Approved --> Review: Timeout or uncertain result
-    Review --> Review: Retry rejected
-    Ordered --> Ordered: Return saved order
-```
+The checkout uses a deterministic idempotency key derived from the saved cart version and total.
 
-`Review` is represented by an approved session with an unknown checkout attempt in its policy JSON. A timeout, invalid provider response or failed local order save leaves the claim locked. There is no automatic claim expiry: releasing it without reconciling the provider could duplicate an order. The audit trace retains the attempt ID and idempotency key, and the policy retains a provider order ID when one was observed. A process interruption can leave a pending claim, which also stays locked. An operator reconciliation workflow is available through Merchant → Orders with the adapter contract described above. Unconfirmed outcomes remain locked; do not clear these records or submit a replacement order without checking the provider.
+A repeated request for an already completed checkout returns the saved order instead of creating another one.
 
-This prevents concurrent provider submissions for the same saved session. It does not deduplicate separate shopping sessions or guarantee a provider's own idempotency behavior. Provider tests use controlled responses, including timeout, mismatched amounts and a failed database save after provider success.
+### Uncertain provider outcomes
 
-## Data model
+If the provider times out, returns an invalid response, or the local order save fails after provider success, the session remains locked for review.
 
-```mermaid
-erDiagram
-    SHOPPING_SESSIONS ||--o{ AUDIT_EVENTS : records
-    SHOPPING_SESSIONS ||--o| ORDERS : creates
+The system does **not** blindly retry.
 
-    SHOPPING_SESSIONS {
-        text id PK
-        text intent
-        text status
-        integer budget
-        integer total
-        text cart_version
-        text cart_json
-        text policy_json
-        text created_at
-        text approved_at
-    }
+A reconciliation workflow can verify a terminal provider outcome before releasing a reservation or recording a recovered order.
 
-    AUDIT_EVENTS {
-        text id PK
-        text session_id FK
-        integer sequence
-        text type
-        text state
-        text title
-        text detail
-        text metadata_json
-    }
+The repository includes controlled tests for:
 
-    ORDERS {
-        text id PK
-        text session_id FK
-        text provider_order_id
-        integer amount
-        text status
-        text mode
-        text idempotency_key
-    }
-```
+- concurrent checkout requests
+- stale cart updates
+- inventory races
+- provider timeouts
+- provider amount mismatches
+- failed database persistence after provider success
+- duplicate recovery requests
+- late checkout completion
+- transaction races
 
-`(session_id, sequence)`, `orders.session_id` and `orders.idempotency_key` are unique. Recent-session and status queries have dedicated indexes. Schema changes are generated with Drizzle and shipped as append-only migrations.
+See [checkout concurrency tests](tests/checkout-concurrency.test.mjs) and [order recovery tests](tests/order-recovery.test.mjs).
 
-## Policy boundary
+---
 
-Every cart is checked for:
+## Policy engine
 
-1. known catalogue product IDs;
-2. integer quantities between 1 and 3;
-3. current stock;
-4. delivery within the promised window;
-5. a total within the budget parsed from the request (₹2,000 when omitted); and
-6. an exact cart version at checkout.
+Every cart is checked server-side for:
 
-The policy result is stored with the session and recalculated before order creation. A `passed` value from the client or model is never trusted.
+| Constraint | Enforcement |
+| --- | --- |
+| Product identity | Must exist in the current catalogue |
+| Quantity | Integer quantity from 1–3 |
+| Budget | Server-calculated total must be within the parsed budget |
+| Inventory | Current stock must cover the requested quantity |
+| Delivery | Catalogue estimate must satisfy the requested window |
+| Approval | Buyer must approve the current cart |
+| Cart version | Checkout must use the current authoritative version |
 
-### Request constraints
+Both model recommendations and deterministic fallback recommendations pass through the same validation path.
 
-The server now reads INR budgets, supported product categories and exclusions before requesting a recommendation. Both the model output and the catalogue fallback pass through the same checks. Those checks run again on cart edits and checkout; removing every item blocks checkout.
+Example:
 
-Try `Only sunscreen. No cleanser, serum or gift wrap. Budget ₹600.` The resulting cart should contain the ₹599 sunscreen. `Only sunscreen under ₹100` returns a no-match response instead of a preset bundle. Changing the request in the browser requires building a new cart before checkout.
+`Only sunscreen under ₹100`
 
-The parser reads merchant-defined categories as request keywords and retains aliases for cleanser, serum, sunscreen/SPF and gift wrap. Sensitive-skin and fragrance-free checks use catalogue tags. Explicitly named categories restrict the selection. Budgets support rupee symbols, INR/Rs, commas, decimals and `k`. Delivery supports today, tomorrow, numeric day limits and weekdays; weekday calculations use UTC and the session creation date, and remain catalogue estimates. Other delivery formats ask for clarification. Requested quantities ask the buyer to use the cart controls. This is not yet a general natural-language constraint engine: compound requests, unsupported items mixed with supported items, and arbitrary ingredient restrictions still need stronger extraction and confirmation.
+returns a **no-match** response rather than silently relaxing the request.
 
-If no suitable selection covers the explicitly requested categories within budget, `/api/agent` returns HTTP 422 with `NO_MATCH`; unsupported input returns `CLARIFICATION_REQUIRED`. These attempts do not yet create an audit session. Buyers can remove products after the initial selection. CSV/JSON catalogue import is available through the merchant editor, as described below. Automated platform synchronization and persisted constraint schemas remain follow-up work.
+---
 
-Gemini is configured on the server using `GEMINI_API_KEY` and `GEMINI_MODEL`. The example model is `gemini-3.5-flash-lite`, which was verified with the development account; model access depends on your account. Provider errors or invalid selections use the constrained fallback. The UI shows the policy result instead of presenting the model's uncalibrated fit score as a measured percentage.
+## Inventory conflicts
+
+Inventory can change between recommendation and checkout.
+
+IntentCart can mark a saved product unavailable for that session, persist that exclusion and attempt a replacement that still satisfies the request.
+
+If no valid replacement exists, the cart remains blocked instead of silently substituting a product.
+
+Reservations are retained when a provider outcome is uncertain. Stock is released only after a terminal non-creation outcome has been established.
+
+See the [order recovery API](app/api/orders/reconcile/route.ts) and [commerce policy code](lib/commerce.ts).
+
+---
+
+## Security and ownership
+
+IntentCart includes a private merchant workspace rather than a public shared dashboard.
+
+Each merchant owns a store, and the server resolves the store from the authenticated session rather than trusting a store ID supplied by the browser.
+
+Implemented protections include:
+
+- PBKDF2-HMAC-SHA256 password hashing with random salts
+- hashed random session tokens
+- HttpOnly, SameSite cookies
+- Secure cookies over HTTPS
+- seven-day session expiry
+- origin checks for state-changing requests
+- request-size limits
+- database-backed login and reset rate limits
+- store-scoped session, order and audit queries
+- catalogue-version checks during checkout
+- server-side request validation with Zod
+
+This is application-level security work, not a claim of production security certification.
+
+---
+
+## Merchant workspace
+
+Each account gets its own store and editable catalogue.
+
+From the merchant console you can:
+
+- edit product names, prices, stock and delivery estimates
+- create custom categories and tags
+- import CSV/JSON catalogues
+- export the current catalogue
+- inspect shopping sessions
+- inspect orders and uncertain checkouts
+- run recovery for supported test/external provider flows
+- view store-scoped metrics
+
+Catalogue prices are entered in rupees and stored as integer paise.
+
+---
 
 ## API surface
 
-### `POST /api/agent`
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/agent` | Create a shopping session from buyer intent |
+| `POST /api/cart` | Update, conflict or repair a cart |
+| `POST /api/checkout` | Validate approval and create/reuse an order |
+| `GET /api/audit` | Read the persisted decision trace |
+| `GET /api/merchant` | Read store-scoped metrics |
+| `GET /api/catalogue` | Read the authenticated store catalogue |
+| `PUT /api/catalogue` | Versioned catalogue update |
 
-Creates and persists a shopping session.
+The checkout API intentionally accepts no client-supplied amount.
 
-```json
-{
-  "intent": "Build a skincare gift under ₹2,000 for sensitive skin."
-}
-```
+---
 
-The response contains a session ID, cart version, normalized products, server total, policy result, fit score and recommendation mode.
+## Testing
 
-### `POST /api/cart`
+The test suite exercises the application as a stateful system, including:
 
-Updates the current cart or runs an inventory transition.
+- recommendation and session creation
+- server-side price calculation
+- policy validation
+- stale cart rejection
+- approval requirements
+- inventory conflicts
+- replacement and repair
+- idempotent checkout
+- merchant isolation
+- authentication and recovery
+- concurrent cart writes
+- concurrent checkout
+- uncertain provider outcomes
+- recovery races
+- Worker rendering and shared UI behavior
 
-```json
-{
-  "sessionId": "IC-41F7A2B9",
-  "cartVersion": "IC-41F7A2B9-v1",
-  "action": "update",
-  "items": [
-    { "productId": "sku_cleanser_01", "quantity": 2 }
-  ]
-}
-```
+Tests use an in-memory SQLite/D1-compatible setup for API lifecycle coverage and controlled provider responses for checkout failure scenarios.
 
-Supported actions are `update`, `conflict` and `repair`. Every successful update returns a new authoritative version when the cart changes.
+Run everything with:
 
-### `POST /api/checkout`
+`npm test`
 
-```json
-{
-  "sessionId": "IC-41F7A2B9",
-  "cartVersion": "IC-41F7A2B9-vm1abc23",
-  "approval": true
-}
-```
+---
 
-The server rejects missing approval, stale versions, blocked sessions, changed totals and failed policy checks. A repeated request for an already completed version returns the existing order.
+## Run locally
 
-### `GET /api/audit?sessionId=...`
+### Requirements
 
-Returns the session and its ordered event list. Without a session ID it returns the latest recorded trace.
+- Node.js **22.13+**
+- npm
 
-### `GET /api/merchant`
-
-Returns aggregate revenue, order value, conversion counts, blocked-session counts and recent sessions from D1.
-
-## Running locally
-
-You need Node.js 22.13 or newer and npm.
+### Setup
 
 ```bash
 git clone https://github.com/6289subhasree/intent-cart.git
@@ -308,30 +327,20 @@ npm run dev
 
 Open the local URL printed by Vite.
 
-Open `/login`, choose **Create a store**, and enter a username, password and store name. Registration creates an owner account and a separate copy of the five sample products. Use **Catalogue** in the merchant sidebar to change your store’s product names, prices, stock and delivery estimates. Open the shopping workspace to try those values in a recommendation.
+No API key is required for the deterministic recommendation path or the persisted cart/policy/test-order workflow.
 
-For an existing Windows checkout, stop Vite with Ctrl+C, run `git pull origin main`, then `npm run dev`. Startup now uses a Node script so PowerShell does not need Bash-style environment assignments. It applies the account migration before opening Vite. Your existing Gemini settings stay in `.env.local`.
+### Optional AI provider
 
-Older shopping records had no store owner. The migration keeps them with a null `store_id`; they are excluded from signed-in workspaces rather than being assigned to the first person who registers. A new account therefore starts with an empty dashboard. No old records are deleted, and there is no public “claim old records” endpoint.
-
-`npm run dev` applies unapplied D1 migrations to the local database before starting the app. No API credentials are required for the full persisted cart, policy, failure, repair and test-order flow.
-
-Typical setup time:
-
-- first run: roughly 2–5 minutes, mostly dependency installation;
-- later runs: usually under a minute;
-- full build and test suite: usually under a minute on a modern laptop.
-
-### Optional recommendation model
+The recommendation layer can use an LLM when configured:
 
 ```env
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-5-mini
 ```
 
-Without these values, IntentCart uses its deterministic recommendation path. Persistence, policy enforcement and checkout behavior are unchanged.
+If the model is unavailable or produces an invalid selection, IntentCart falls back to its constrained deterministic recommendation path.
 
-### Optional test payment provider
+### Optional test order provider
 
 ```env
 PAYMENT_ORDER_API_URL=https://your-provider.example/orders
@@ -340,158 +349,103 @@ PAYMENT_KEY_SECRET=your_test_secret
 PAYMENT_IDEMPOTENCY_HEADER=X-Idempotency-Key
 ```
 
-The adapter sends HTTP Basic authentication, an amount in paise and the cart-derived idempotency key. Keep credentials in `.env.local`; that file is ignored by Git.
+Keep credentials in `.env.local`.
+
+---
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Apply local migrations and start the app |
-| `npm run db:local` | Apply only the local D1 migrations |
-| `npm run db:generate` | Generate a migration after a schema change |
-| `npm run typecheck` | Generate Cloudflare types and check TypeScript |
-| `npm run build` | Produce the Worker-compatible build |
-| `npm test` | Build and run the full test suite |
+| `npm run db:local` | Apply local D1 migrations |
+| `npm run db:generate` | Generate a Drizzle migration |
+| `npm run typecheck` | Type-check the Worker and application |
+| `npm run build` | Build the Worker-compatible application |
+| `npm test` | Build and run the test suite |
 | `npm run evaluate` | Recalculate the controlled evaluation fixture |
 
-## Tests
+---
 
-The suite covers the complete session lifecycle, not only isolated helpers:
-
-- recommendation creates a saved session with a server-priced cart;
-- audit events can be read back in order;
-- checkout requires explicit approval;
-- checkout rejects an older cart version;
-- over-budget quantity changes produce a blocked session;
-- inventory failure prevents order creation;
-- repair replaces the unavailable product and resets approval;
-- a valid approval creates an order;
-- a repeated checkout reuses that order;
-- merchant totals reflect the stored order;
-- catalogue price calculation and invalid-item handling; and
-- production Worker rendering and shared UI semantics.
-
-The API lifecycle tests apply all SQL migrations to an in-memory SQLite database with a D1 adapter. Authentication tests create two actual accounts and exercise separate catalogues, foreign session IDs, scoped analytics, cookie expiry, logout, password changes, recovery-code rotation and concurrent single-use resets, origin checks and login/reset throttling. Provider responses are controlled in tests. The local D1 migration is also checked separately; these checks are not a substitute for production security review.
-
-## Merchant accounts and store ownership
-
-Each account owns one store. The server resolves that store from an opaque session cookie, never from a store ID submitted by the browser. Every commerce API requires authentication. Session and audit lookups include the resolved store ID; order records and audit events belong to their parent shopping session. The “latest trace” and merchant totals are also scoped to the signed-in store.
-
-```mermaid
-flowchart TD
-    Browser["Signed-in browser"] --> Gate["Cookie and origin checks"]
-    Gate --> Session["Hashed token and expiry lookup"]
-    Session --> Owner["Merchant → owned store"]
-    Owner --> Catalogue["Store catalogue and version"]
-    Owner --> Cart["Shopping session with store_id"]
-    Catalogue --> Checks["Server price and policy checks"]
-    Cart --> Checks
-    Checks --> Claim["Atomic checkout claim"]
-    Claim --> Order["Order attached to that session"]
-    Cart --> Audit["Store-scoped audit and analytics"]
-    Order --> Audit
-```
-
-Passwords use PBKDF2-HMAC-SHA256 with a random salt and 600,000 iterations. The database stores only a SHA-256 digest of each random 256-bit session token. Sessions expire after seven days; logout deletes the token record. Password changes revoke existing sessions and issue a fresh cookie. Cookies are HttpOnly and SameSite=Strict, with Secure enabled on HTTPS. State-changing APIs reject missing or mismatched origins and oversized request bodies. Sign-in and registration have database-backed rate limits. The password work factor follows the [OWASP password-storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html); the implementation uses [Cloudflare’s supported Node crypto API](https://developers.cloudflare.com/workers/runtime-apis/nodejs/crypto/).
-
-| Endpoint | Purpose |
-| --- | --- |
-| `POST /api/auth/register` | Create an owner and a store; sign in |
-| `POST /api/auth/login` | Verify credentials and issue a session |
-| `GET /api/auth/me` | Return the current owner’s store identity |
-| `POST /api/auth/logout` | Revoke the current session |
-| `POST /api/auth/password` | Change password and revoke other sessions |
-| `POST /api/auth/recovery-code` | Generate a replacement recovery code after checking the current password |
-| `POST /api/auth/reset` | Consume a recovery code, reset the password and revoke all sessions |
-| `GET /api/catalogue` | Read the owner’s catalogue and version |
-| `PUT /api/catalogue` | Update that catalogue using its current version |
-
-Catalogue edits affect only the owner’s store. Recommendation and fallback logic receive that catalogue explicitly; they do not mutate a shared module-level list. Checkout recalculates against the current store catalogue and rejects a changed total. Its database claim also checks the catalogue version, closing the gap if a catalogue edit wins just before checkout.
-
-This release is a private owner workspace, not yet a public storefront. Staff invitations, email-based recovery, MFA, account deletion and per-store payment-provider credentials are still missing. Save your password and recovery code. The catalogue editor supports up to 200 products with custom categories, descriptions, tags and optional HTTPS image URLs. Categories use lowercase letters, digits, spaces and hyphens. Products with pending reservations cannot be deleted or recategorized. API model and test-order credentials remain server configuration. The hosted demo is updated separately from GitHub and may run an earlier release.
-
-## Repository map
+## Repository structure
 
 ```text
 app/
 ├── api/
-│   ├── agent/route.ts       recommendation + session creation
-│   ├── cart/route.ts        cart edits, conflicts and repair
-│   ├── checkout/route.ts    approval, policy reload and order creation
-│   ├── audit/route.ts       persisted trace reader
-│   └── merchant/route.ts    aggregate session metrics
-├── demo/page.tsx            buyer workspace
-├── audit/page.tsx           trace viewer
-├── merchant/page.tsx        merchant console
-└── page.tsx                 product page
+│   ├── agent/route.ts
+│   ├── cart/route.ts
+│   ├── checkout/route.ts
+│   ├── audit/route.ts
+│   └── merchant/route.ts
+├── demo/page.tsx
+├── audit/page.tsx
+├── merchant/page.tsx
+└── page.tsx
+
 db/
-├── schema.ts                Drizzle schema
-└── repository.ts            prepared D1 queries
-drizzle/                     append-only SQL migrations
-lib/commerce.ts              catalogue, totals, policy and repair
-tests/                       lifecycle, policy, rendering and UI tests
-worker/index.ts              Cloudflare Worker entry point
+├── schema.ts
+└── repository.ts
+
+lib/
+├── commerce.ts
+└── ...
+
+drizzle/                  SQL migrations
+tests/                    Lifecycle, reliability and UI tests
+worker/                   Cloudflare Worker entry point
+evaluation/               Controlled regression fixture
 ```
 
-## Evaluation fixture
-
-`evaluation/summary.json` is a controlled 500-session benchmark that can be reproduced with `npm run evaluate`. It is kept separate from the merchant console: the console now displays recorded application sessions, while the fixture remains useful for repeatable regression comparisons.
+---
 
 ## Technology
 
-- React 19 and TypeScript
-- Vinext and Vite
-- Cloudflare Workers and D1
-- Drizzle migrations with prepared D1 statements
-- Zod request validation
-- Tailwind CSS and Shadcn UI primitives
-- Recharts
-- OpenAI Responses API as an optional recommendation provider
+- **React 19 + TypeScript**
+- **Vinext + Vite**
+- **Cloudflare Workers + D1**
+- **Drizzle ORM**
+- **Zod**
+- **Tailwind CSS**
+- **Recharts**
+- **OpenAI Responses API** as an optional recommendation provider
 
-## Next useful additions
+---
 
-- Catalogue synchronization with ecommerce platforms.
-- Webhook-driven inventory updates.
-- Staff roles, email-based recovery, MFA and public shopper access with session ownership.
-- Expiring approval tokens for long-running carts.
-- Provider webhook reconciliation for order status.
-- Observability around model latency, fallback rate and policy rejection reasons.
+## Current scope
 
-Those are deliberately separate from the current core: the repository already demonstrates the full recommendation → policy → persisted session → approval → test order → audit loop end to end.
+IntentCart is a working prototype of bounded agentic commerce, not a production ecommerce platform.
 
-## Recovering a merchant account
+Not yet included:
 
-Signup shows a random recovery code once. Save it in a password manager alongside your username before opening the store. Existing accounts can generate a code from **Account → Password recovery** by entering their current password. Generating a new code invalidates the previous one.
+- public shopper accounts
+- staff roles and permissions
+- MFA
+- email-based account recovery
+- ecommerce-platform inventory synchronization
+- authenticated inventory webhooks
+- provider webhooks for asynchronous order status
+- production payment capture
+- unrestricted natural-language constraint extraction
 
-On the sign-in page, choose **Forgot password?**, enter your username and saved code, and choose a new password. A successful reset consumes the code and signs out every existing session. Sign in again, then generate a replacement code for next time. Ordinary password changes leave your saved recovery code valid.
+These are intentionally separate from the core demonstration: **AI recommendation → deterministic validation → persisted cart → explicit approval → reliable checkout → audit trail.**
 
-There is no email service or verified email address in the account model yet. Recovery therefore requires a code saved in advance; knowing a username is not sufficient. If you lose both your password and recovery code, this self-service flow cannot restore access.
+---
 
-The server stores a SHA-256 digest of the random 256-bit code, never its plaintext. Reset attempts are rate limited by username and IP. Updating the password, consuming the code and revoking sessions share one database transaction; concurrent uses of the same code allow only one successful reset. The code is returned only at signup or authenticated generation, in a response marked `no-store`, and is not placed in browser storage or URLs.
+## Evaluation
 
-```mermaid
-flowchart TD
-  A["Signup or authenticated code generation"] --> B["Show code once; store its digest"]
-  B --> C["Owner saves code privately"]
-  C --> D["Forgot password: username, code, new password"]
-  D --> E{"Origin, rate limit and code checks"}
-  E -->|Rejected| F["Keep credentials unchanged"]
-  E -->|Accepted| G["Atomic password update, code consumption and session revocation"]
-  G --> H["Sign in and generate a new code"]
-```
+The repository contains a controlled evaluation fixture under `evaluation/` for repeatable regression comparisons.
 
-After updating an existing checkout, `npm run dev` applies the new recovery-column migration automatically. It preserves accounts and store records; existing accounts initially have no recovery code.
-### Managing products
+It should not be interpreted as:
 
-Open **Merchant → Catalogue**, add or remove draft products, then **Save catalogue**. Prices in the editor are rupees; the API stores integer paise. Stock means available units, excluding checkout reservations. Saving uses the loaded catalogue version so a stale editor cannot overwrite a concurrent checkout. Removal affects future carts; existing order traces retain their product IDs and approved totals. New products can use custom category names such as `headphones`; shoppers should name those categories in their request. Delivery estimates support 0–30 days and are checked against the buyer’s requested limit. This does not provide carrier delivery guarantees or unrestricted natural-language attribute extraction.
-### Importing and exporting a catalogue
+- customer traction
+- measured conversion uplift
+- production A/B results
+- evidence of live payment volume
 
-Use **Merchant → Catalogue → Import catalogue**. Download the CSV template or export your current draft as JSON. CSV requires `id,name,detail,category,priceRupees,stock,deliveryDays`; `tags,imageUrl,crop` are optional. CSV tags use `|`, prices use rupees with at most two decimal places, and standard quoted fields support commas and newlines. JSON uses an array of product objects with integer-paise `price`, array `tags` and explicit `category`. Files are limited to 500 KB and catalogues to 200 products.
+Checkout in the demo creates test orders only.
 
-Importing first validates and previews the file. **Merge by SKU** replaces matching products while retaining others; **Replace the whole draft catalogue** removes products absent from the file. The preview shows new, matching and removed counts. **Apply preview to draft** still does not persist anything: review the editor, then click **Save catalogue**. Server-side validation, reservation protection and catalogue-version checks apply to imports too. Export includes current unsaved draft edits.
+---
 
-### Recovery compatibility and experiment readiness
+## License
 
-External checkouts record a fingerprint of their order endpoint and provider account ID. Recovery requires the same configuration; changing to another provider account cannot produce a false non-creation result. Legacy checkouts without that identity remain locked for review. Stock release also requires a recorded reservation event, preventing old checkouts from restoring stock that was never deducted.
-
-The [A/B testing plan](docs/ab-testing-plan.md) defines the acceptance gate, first experiment, metrics and assignment requirements. Stable A/B assignment, visible-page exposure tracking, server-side first-cart/order attribution and an administrator-only results page are implemented, **disabled by default**. See the experiment guide for local setup, first-time-account eligibility, the 24-hour measurement window and remaining launch requirements.
+Private project repository.
