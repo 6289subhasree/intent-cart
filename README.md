@@ -268,6 +268,37 @@ At checkout, the server:
 
 The same policy is therefore evaluated at the point where the transaction matters—not only when the recommendation was generated.
 
+```mermaid
+sequenceDiagram
+    actor B as Buyer
+    participant UI as Buyer workspace
+    participant A as Recommendation API
+    participant P as Policy engine
+    participant DB as D1
+    participant C as Checkout API
+    participant Pay as Test payment API
+
+    B->>UI: Describe desired outcome
+    UI->>A: POST /api/agent
+    A->>P: Validate catalogue IDs and total
+    P-->>A: Policy result
+    A->>DB: Save session and initial events
+    A-->>UI: Cart, reasons, version and policy
+    B->>UI: Edit or approve cart
+    UI->>C: Session ID + cart version + approval
+    C->>DB: Load authoritative session
+    C->>P: Recalculate current cart
+    alt stale, blocked or outside policy
+        P-->>C: Reject
+        C-->>UI: Checkout blocked
+    else current and approved
+        P-->>C: Pass
+        C->>Pay: Create test order with idempotency key
+        C->>DB: Save order and approval events
+        C-->>UI: Order created
+    end
+```
+
 ---
 
 ## 10. Atomic checkout claim
@@ -291,6 +322,18 @@ ORDERED / REVIEW_REQUIRED
 Only the request that successfully claims the session proceeds as the active checkout attempt.
 
 The database state is therefore part of the concurrency control rather than relying on the browser to serialize requests.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ready
+    Ready --> Blocked: Inventory conflict
+    Blocked --> Ready: Valid edit or replacement
+    Ready --> Approved: Atomic checkout claim
+    Approved --> Ordered: Valid response saved
+    Approved --> Review: Timeout or uncertain result
+    Review --> Review: Retry rejected
+    Ordered --> Ordered: Return saved order
+```
 
 ---
 
@@ -374,6 +417,16 @@ The system does not silently substitute a product merely to complete the transac
 
 This preserves the buyer's original constraints across recovery.
 
+```mermaid
+stateDiagram-v2
+    [*] --> Ready: Recommendation saved
+    Ready --> Ready: Quantity or upsell change
+    Ready --> Blocked: Inventory conflict
+    Blocked --> Ready: Replacement + revalidation
+    Ready --> Ordered: Exact version approved
+    Ordered --> Ordered: Duplicate request reuses order
+```
+
 ---
 
 ## 15. Audit trail
@@ -418,6 +471,21 @@ The same ownership boundary applies to:
 
 Tenant isolation is therefore a server-side authorization rule rather than a frontend convention.
 
+```mermaid
+flowchart TD
+    Browser["Signed-in browser"] --> Gate["Cookie and origin checks"]
+    Gate --> Session["Hashed token and expiry lookup"]
+    Session --> Owner["Merchant → owned store"]
+    Owner --> Catalogue["Store catalogue and version"]
+    Owner --> Cart["Shopping session with store_id"]
+    Catalogue --> Checks["Server price and policy checks"]
+    Cart --> Checks
+    Checks --> Claim["Atomic checkout claim"]
+    Claim --> Order["Order attached to that session"]
+    Cart --> Audit["Store-scoped audit and analytics"]
+    Order --> Audit
+```
+
 ---
 
 ## 17. Security boundary
@@ -439,6 +507,17 @@ Current protections include:
 - catalogue-version checks during checkout
 
 These controls protect the application boundary, but they are not presented as a production security certification.
+
+```mermaid
+flowchart TD
+  A["Signup or authenticated code generation"] --> B["Show code once; store its digest"]
+  B --> C["Owner saves code privately"]
+  C --> D["Forgot password: username, code, new password"]
+  D --> E{"Origin, rate limit and code checks"}
+  E -->|Rejected| F["Keep credentials unchanged"]
+  E -->|Accepted| G["Atomic password update, code consumption and session revocation"]
+  G --> H["Sign in and generate a new code"]
+```
 
 ---
 
@@ -493,6 +572,46 @@ Returns store-scoped merchant metrics and operational information.
 ## 19. Persistence model
 
 Cloudflare D1 provides durable application state, with Drizzle ORM providing typed database access.
+
+```mermaid
+erDiagram
+    SHOPPING_SESSIONS ||--o{ AUDIT_EVENTS : records
+    SHOPPING_SESSIONS ||--o| ORDERS : creates
+
+    SHOPPING_SESSIONS {
+        text id PK
+        text intent
+        text status
+        integer budget
+        integer total
+        text cart_version
+        text cart_json
+        text policy_json
+        text created_at
+        text approved_at
+    }
+
+    AUDIT_EVENTS {
+        text id PK
+        text session_id FK
+        integer sequence
+        text type
+        text state
+        text title
+        text detail
+        text metadata_json
+    }
+
+    ORDERS {
+        text id PK
+        text session_id FK
+        text provider_order_id
+        integer amount
+        text status
+        text mode
+        text idempotency_key
+    }
+```
 
 The database stores the state required to make the workflow recoverable:
 
