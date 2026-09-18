@@ -93,10 +93,6 @@ The [merchant console](https://intent-cart.subhasree6289.chatgpt.site/merchant) 
 
 ## Architecture
 
-![IntentCart architecture](docs/architecture.svg)
-
-[Open the architecture diagram](docs/architecture.svg) · [Read the reliability model](docs/reliability.md)
-
 ```mermaid
 flowchart LR
     User["Buyer"] --> Intent["Natural-language intent"]
