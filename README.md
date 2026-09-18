@@ -18,7 +18,7 @@ The core invariant is:
 
 ## 1. System architecture
 
-~~~mermaid
+```mermaid
 flowchart LR
     User["Buyer"] --> Intent["Natural-language intent"]
     Intent --> Agent["Recommendation API"]
@@ -40,7 +40,7 @@ flowchart LR
 
     DB --> Audit["Audit trail"]
     DB --> Merchant["Merchant console"]
-~~~
+```
 
 The architecture has two fundamentally different zones.
 
@@ -109,7 +109,7 @@ The recommendation layer can operate in two modes:
 
 The LLM is useful for interpreting intent and selecting plausible catalogue products, but both paths converge on the same server-side validation pipeline.
 
-~~~text
+```text
 Buyer intent
     ↓
 Recommendation
@@ -121,7 +121,7 @@ Catalogue validation
 Policy evaluation
     ↓
 Authoritative cart
-~~~
+```
 
 This means the fallback path is not a second, weaker commerce implementation. It is another way of producing input for the same trusted boundary.
 
@@ -195,11 +195,11 @@ The persisted cart becomes the source of truth for the remainder of the workflow
 
 A useful mental model is:
 
-~~~text
+```text
 Recommendation = proposal
 Cart = server-owned state
 Checkout = transition of server-owned state
-~~~
+```
 
 ---
 
@@ -211,7 +211,7 @@ When a buyer edits the cart, the server creates a new authoritative version and 
 
 Approval is tied to a specific version.
 
-~~~text
+```text
 Cart v7
   ↓
 Buyer approves v7
@@ -221,7 +221,7 @@ Buyer edits cart
 Cart v8
   ↓
 Approval for v7 is no longer sufficient
-~~~
+```
 
 This prevents a stale approval from authorizing a different cart.
 
@@ -278,7 +278,7 @@ Without an atomic claim, two requests could observe the same ready session and b
 
 IntentCart uses a server-side atomic state transition before contacting the provider.
 
-~~~text
+```text
 READY
   ↓ atomic claim
 CHECKOUT_IN_PROGRESS
@@ -286,7 +286,7 @@ CHECKOUT_IN_PROGRESS
 provider operation
   ↓
 ORDERED / REVIEW_REQUIRED
-~~~
+```
 
 Only the request that successfully claims the session proceeds as the active checkout attempt.
 
@@ -300,7 +300,7 @@ Distributed systems can produce the uncomfortable situation where the client doe
 
 For example:
 
-~~~text
+```text
 IntentCart → provider
              ↓
           order created
@@ -308,7 +308,7 @@ IntentCart → provider
        response is lost
              ↓
 IntentCart sees a timeout
-~~~
+```
 
 Blindly retrying could create a duplicate order.
 
@@ -382,7 +382,7 @@ Important decisions are persisted as audit events.
 
 The audit layer provides a trace through the stateful workflow:
 
-~~~text
+```text
 intent
   → recommendation
   → validation
@@ -392,7 +392,7 @@ intent
   → checkout claim
   → provider outcome
   → order / recovery state
-~~~
+```
 
 This makes the system explainable after the fact.
 
@@ -569,7 +569,7 @@ Key test files:
 
 ## 22. Repository structure
 
-~~~text
+```text
 app/
 ├── api/
 │   ├── agent/route.ts
@@ -594,11 +594,11 @@ drizzle/                  SQL migrations
 tests/                    Lifecycle, reliability and UI tests
 worker/                   Cloudflare Worker entry point
 evaluation/               Controlled regression fixture
-~~~
+```
 
 The main application flow is:
 
-~~~text
+```text
 app/api
    ↓
 domain + policy
@@ -612,7 +612,7 @@ app/merchant
 app/audit
    ↓
 same server-owned APIs
-~~~
+```
 
 The UI does not implement a second version of the commerce rules.
 
@@ -640,22 +640,22 @@ The UI does not implement a second version of the commerce rules.
 
 ### Setup
 
-~~~bash
+```bash
 git clone https://github.com/6289subhasree/intent-cart.git
 cd intent-cart
 npm ci
 cp .env.example .env.local
 npm run dev
-~~~
+```
 
 The deterministic recommendation path and persisted cart/policy/test-order workflow do not require an AI API key.
 
 An optional LLM can be configured through environment variables:
 
-~~~env
+```env
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-5-mini
-~~~
+```
 
 An optional test/external order provider can also be configured through environment variables.
 
